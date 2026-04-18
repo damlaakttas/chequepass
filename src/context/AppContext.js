@@ -2,13 +2,24 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, useMemo } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+// --- YENİ EKLENEN FIREBASE İÇE AKTARMALARI ---
+import {
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  signOut as fbSignOut,
+  onAuthStateChanged,
+  sendEmailVerification,
+} from 'firebase/auth';
+import { doc, setDoc } from 'firebase/firestore';
+import { auth, db } from '../config/firebase'; // Az önce oluşturduğumuz bağlantı dosyası
+// ---------------------------------------------
+
 const AppContext = createContext(null);
 
 const STORAGE_KEY = '@chequepass_state_v1';
 
 // ---- Seed data (ilk kurulumda) -----------------------------------------------
 const AVATAR_POOL = ['fox', 'panda', 'koala', 'bunny', 'cat', 'owl'];
-
 const randomAvatar = () => AVATAR_POOL[Math.floor(Math.random() * AVATAR_POOL.length)];
 
 const seedState = () => ({
@@ -16,9 +27,9 @@ const seedState = () => ({
   isOnboarded: false,
   freePassUsed: false,
   activeFriendId: null,
-  friends: [], // [{ id, username, relation: 'partner'|'friend', avatar, since }]
-  cheques: [], // [{ id, title, reason, ownerId, direction, fromId, toId, note, createdAt, status }]
-  notifications: [], // [{ id, title, body, createdAt, read, type }]
+  friends: [],
+  cheques: [],
+  notifications: [],
   achievements: [
     { id: 'first_cheque', title: 'İlk Çek', description: 'İlk çekini kopardın', unlocked: false },
     { id: 'first_gift', title: 'Cömert Ruh', description: 'Bir çeki hediye ettin', unlocked: false },
@@ -26,7 +37,6 @@ const seedState = () => ({
     { id: 'five_cheques', title: 'Koleksiyoncu', description: '5 çek topladın', unlocked: false },
     { id: 'first_friend', title: 'Sosyal Kelebek', description: 'İlk arkadaşını ekledin', unlocked: false },
   ],
-  // Sahte çek havuzu - her kopartmada buradan bir tanesi seçilir
   chequeTemplates: [
     { title: 'Akşam Yemeği', subtitle: 'Romantik bir akşam yemeği hakkı', color: '#add7c4' },
     { title: 'Kahve Ismarlama', subtitle: 'Favori kafende bir kahve', color: '#ebf381' },
@@ -46,14 +56,16 @@ export const AppProvider = ({ children }) => {
   const [state, setState] = useState(seedState());
   const [hydrated, setHydrated] = useState(false);
 
-  // Load from storage
+  // Load from storage (Yerel ayarlar için)
   useEffect(() => {
     (async () => {
       try {
         const raw = await AsyncStorage.getItem(STORAGE_KEY);
         if (raw) {
           const parsed = JSON.parse(raw);
-          setState((prev) => ({ ...prev, ...parsed }));
+          // user'ı Storage'dan değil, Firebase'den yöneteceğimiz için user'ı dahil etmiyoruz.
+          const { user, ...rest } = parsed; 
+          setState((prev) => ({ ...prev, ...rest }));
         }
       } catch (e) {
         console.warn('Hydrate failed', e);
@@ -63,6 +75,32 @@ export const AppProvider = ({ children }) => {
     })();
   }, []);
 
+  // --- YENİ EKLENEN FIREBASE OTURUM DİNLEYİCİSİ ---
+  useEffect(() => {
+    // Uygulama açıldığında Firebase'deki oturumu kontrol et
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      if (currentUser) {
+        // Kullanıcı giriş yapmışsa state'e ekle
+        setState((prev) => ({
+          ...prev,
+          user: {
+            uid: currentUser.uid,
+            email: currentUser.email,
+            // (Avatar ve Username gibi ekstra bilgileri Firestore'dan çekeceğiz, şimdilik null/boş)
+            username: currentUser.displayName || currentUser.email.split('@')[0],
+            avatar: null, 
+          }
+        }));
+      } else {
+        // Çıkış yapmışsa user'ı temizle
+        setState((prev) => ({ ...prev, user: null }));
+      }
+    });
+
+    return () => unsubscribe(); // Component silinirse dinlemeyi bırak
+  }, []);
+  // ------------------------------------------------
+
   // Persist on change
   useEffect(() => {
     if (!hydrated) return;
@@ -70,75 +108,66 @@ export const AppProvider = ({ children }) => {
   }, [state, hydrated]);
 
   // ---- Actions ---------------------------------------------------------------
-  const signUp = useCallback(async ({ username, email, password }) => {
-    // Mock sign up - gerçek projede Firebase Auth çağrılır
-    if (!username || !email || !password) throw new Error('Tüm alanları doldur');
-    const user = {
-      uid: 'u_' + Date.now(),
-      username: username.trim(),
-      email: email.trim().toLowerCase(),
-      avatar: null,
-      createdAt: Date.now(),
-    };
-    // Varsayılan bir demo arkadaş ekle ki uygulama boş kalmasın
-    const demoFriend = {
-      id: 'f_demo',
-      username: 'elif',
-      relation: 'partner',
-      avatar: randomAvatar(),
-      since: Date.now(),
-    };
-    setState((prev) => ({
-      ...prev,
-      user,
-      friends: [demoFriend],
-      activeFriendId: demoFriend.id,
-      notifications: [
-        {
-          id: 'n_welcome',
-          title: 'Hoş geldin!',
-          body: 'ChequePass dünyasına hoş geldin. İlk çekini koparmaya ne dersin?',
-          createdAt: Date.now(),
-          read: false,
-          type: 'system',
-        },
-      ],
-    }));
-    return user;
-  }, []);
 
+  // --- YENİ FIREBASE KAYIT OLMA (SIGNUP) ---
+  const signUp = useCallback(async ({ username, email, password }) => {
+    if (!username || !email || !password) throw new Error('Tüm alanları doldur');
+    
+    try {
+      // 1. Firebase Auth'da kullanıcı oluştur
+      const credential = await createUserWithEmailAndPassword(auth, email, password);
+      
+      // 2. Doğrulama maili gönder
+      await sendEmailVerification(credential.user);
+      
+      // 3. Kullanıcının ekstra bilgilerini Firestore veritabanına kaydet
+      await setDoc(doc(db, 'users', credential.user.uid), {
+        username: username.trim(),
+        email: email.trim().toLowerCase(),
+        avatar: randomAvatar(), // Rastgele avatar ata
+        createdAt: Date.now(),
+      });
+
+      // Firebase zaten onAuthStateChanged ile user'ı güncelleyecek.
+      // (Demo arkadaş ekleme mantığı Firestore'a geçince düzeltilecek, şimdilik kaldırıldı)
+
+    } catch (error) {
+      console.error("Kayıt Hatası:", error.message);
+      throw error;
+    }
+  }, []);
+  // ------------------------------------------
+
+  // --- YENİ FIREBASE GİRİŞ YAPMA (SIGNIN) ---
   const signIn = useCallback(async ({ email, password }) => {
     if (!email || !password) throw new Error('Email ve şifre gerekli');
-    // Mock - zaten kayıtlıysa devam et, değilse otomatik oluştur
-    setState((prev) => {
-      if (prev.user) return prev;
-      const user = {
-        uid: 'u_' + Date.now(),
-        username: email.split('@')[0],
-        email,
-        avatar: null,
-        createdAt: Date.now(),
-      };
-      const demoFriend = {
-        id: 'f_demo',
-        username: 'elif',
-        relation: 'partner',
-        avatar: randomAvatar(),
-        since: Date.now(),
-      };
-      return {
-        ...prev,
-        user,
-        friends: prev.friends.length ? prev.friends : [demoFriend],
-        activeFriendId: prev.activeFriendId || demoFriend.id,
-      };
-    });
+    
+    try {
+      // Sadece Firebase'e giriş yapmasını söyle. 
+      // İşlem başarılı olursa yukarıdaki onAuthStateChanged otomatik olarak user state'ini dolduracak.
+      await signInWithEmailAndPassword(auth, email, password);
+    } catch (error) {
+      console.error("Giriş Hatası:", error.message);
+      throw error;
+    }
   }, []);
+  // ------------------------------------------
 
-  const signOut = useCallback(() => {
-    setState(seedState());
+  // --- YENİ FIREBASE ÇIKIŞ YAPMA (SIGNOUT) ---
+  const signOut = useCallback(async () => {
+    try {
+      await fbSignOut(auth);
+      // Yerel state'i de sıfırla
+      setState(seedState()); 
+    } catch (error) {
+      console.error("Çıkış Hatası:", error.message);
+    }
   }, []);
+  // -------------------------------------------
 
+
+  // --- AŞAĞIDAKİ DİĞER FONKSİYONLAR (MOCK ÇEK/ARKADAŞ İŞLEMLERİ) ŞİMDİLİK AYNI KALIYOR ---
+  
   const setOnboarded = useCallback(() => {
     setState((prev) => ({ ...prev, isOnboarded: true }));
   }, []);
@@ -194,12 +223,10 @@ export const AppProvider = ({ children }) => {
     }));
   }, []);
 
-  // direction: 'gift' (partnere gönder), 'keep' (kendine al), 'pass' (pas geç)
   const resolveCheque = useCallback((template, direction, note = '') => {
     setState((prev) => {
       if (!prev.user || !prev.activeFriendId) return prev;
 
-      // Pass ise kart oluşma yok, sadece free pass kontrolü ve bildirim
       if (direction === 'pass') {
         const achievements = prev.achievements.map((a) =>
           a.id === 'first_pass' ? { ...a, unlocked: true } : a
@@ -296,7 +323,6 @@ export const AppProvider = ({ children }) => {
   }, []);
 
   const grantExtraPass = useCallback(() => {
-    // Reklam izlendikten sonra free pass'i resetler (ya da ek pass verir)
     setState((prev) => ({ ...prev, freePassUsed: false }));
   }, []);
 
