@@ -13,14 +13,7 @@ import { Colors } from '../src/theme';
 SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
-  const [fontsLoaded, fontError] = useFonts({
-    'CormorantGaramond-Bold':     require('../assets/fonts/CormorantGaramond-Bold.ttf'),
-    'CormorantGaramond-SemiBold': require('../assets/fonts/CormorantGaramond-SemiBold.ttf'),
-    'DMSans-Light':    require('../assets/fonts/DMSans-Light.ttf'),
-    'DMSans-Regular':  require('../assets/fonts/DMSans-Regular.ttf'),
-    'DMSans-Medium':   require('../assets/fonts/DMSans-Medium.ttf'),
-    'DMSans-SemiBold': require('../assets/fonts/DMSans-SemiBold.ttf'),
-  });
+  const [fontsLoaded, fontError] = useFonts({});
 
   const { isInitialized, user, init: initAuth } = useAuthStore();
   const { init: initMatches, clearMatches }      = useMatchStore();

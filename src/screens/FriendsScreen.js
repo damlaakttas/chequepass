@@ -1,0 +1,332 @@
+// src/screens/FriendsScreen.js
+import React, { useState } from 'react';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput, Alert } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { Search, UserPlus, Heart, Users, Trash2, Check } from 'lucide-react-native';
+import ScreenHeader from '../components/ScreenHeader';
+import AnimalAvatar from '../components/AnimalAvatar';
+import BottomSheet from '../components/BottomSheet';
+import { COLORS, FONTS, RADIUS, SHADOW, SPACING } from '../theme/theme';
+import { useApp } from '../context/AppContext';
+import { formatDate } from '../utils/helpers';
+
+const FriendsScreen = () => {
+  const { friends, addFriend, removeFriend, activeFriendId, setActiveFriend } = useApp();
+  const [query, setQuery] = useState('');
+  const [addOpen, setAddOpen] = useState(false);
+  const [newUsername, setNewUsername] = useState('');
+  const [newRelation, setNewRelation] = useState('friend');
+
+  const filtered = friends.filter((f) =>
+    f.username.toLowerCase().includes(query.toLowerCase())
+  );
+
+  const handleAdd = () => {
+    const u = newUsername.trim();
+    if (!u) {
+      Alert.alert('Kullanıcı adı gerekli');
+      return;
+    }
+    if (friends.some((f) => f.username.toLowerCase() === u.toLowerCase())) {
+      Alert.alert('Bu kullanıcı zaten arkadaşın');
+      return;
+    }
+    addFriend(u, newRelation);
+    setAddOpen(false);
+    setNewUsername('');
+    setNewRelation('friend');
+  };
+
+  const handleRemove = (f) => {
+    Alert.alert(
+      `@${f.username} silinsin mi?`,
+      'Bu kişiyle olan çekler listelerinden kaldırılmayacak ama artık bu kişiye çek gönderemeyeceksin.',
+      [
+        { text: 'Vazgeç', style: 'cancel' },
+        { text: 'Sil', style: 'destructive', onPress: () => removeFriend(f.id) },
+      ]
+    );
+  };
+
+  return (
+    <SafeAreaView style={styles.safe} edges={['top']}>
+      <ScreenHeader
+        showFriendSwitcher={false}
+        rightAction={
+          <TouchableOpacity style={styles.addBtn} onPress={() => setAddOpen(true)}>
+            <UserPlus size={16} color="#fff" />
+            <Text style={styles.addBtnText}>Ekle</Text>
+          </TouchableOpacity>
+        }
+      />
+
+      <View style={styles.titleWrap}>
+        <Text style={styles.pageTitle}>Arkadaşlar</Text>
+        <Text style={styles.pageSub}>{friends.length} eşleşme</Text>
+      </View>
+
+      <View style={styles.searchWrap}>
+        <Search size={16} color={COLORS.textMuted} />
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Kullanıcı adı ara..."
+          placeholderTextColor={COLORS.textLight}
+          value={query}
+          onChangeText={setQuery}
+          autoCapitalize="none"
+        />
+      </View>
+
+      {filtered.length === 0 ? (
+        <View style={styles.empty}>
+          <Users size={44} color={COLORS.textLight} />
+          <Text style={styles.emptyTitle}>
+            {friends.length === 0 ? 'Henüz arkadaş yok' : 'Sonuç bulunamadı'}
+          </Text>
+          <Text style={styles.emptySub}>
+            {friends.length === 0
+              ? 'Yeni arkadaş ekleyerek çek göndermeye başla.'
+              : 'Farklı bir kullanıcı adı dene.'}
+          </Text>
+          {friends.length === 0 && (
+            <TouchableOpacity
+              style={[styles.primaryBtn, { marginTop: SPACING.lg }]}
+              onPress={() => setAddOpen(true)}
+            >
+              <Text style={styles.primaryBtnText}>İlk arkadaşını ekle</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      ) : (
+        <FlatList
+          data={filtered}
+          keyExtractor={(i) => i.id}
+          contentContainerStyle={{ paddingHorizontal: SPACING.lg, paddingBottom: 120 }}
+          ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
+          showsVerticalScrollIndicator={false}
+          renderItem={({ item }) => {
+            const active = item.id === activeFriendId;
+            return (
+              <View style={[styles.row, active && styles.rowActive]}>
+                <AnimalAvatar type={item.avatar} size={52} />
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Text style={styles.name}>@{item.username}</Text>
+                    {item.relation === 'partner' && (
+                      <Heart size={12} color={COLORS.danger} fill={COLORS.danger} />
+                    )}
+                  </View>
+                  <Text style={styles.meta}>
+                    {item.relation === 'partner' ? 'Sevgili' : 'Arkadaş'} · {formatDate(item.since)}
+                  </Text>
+                </View>
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  <TouchableOpacity
+                    style={[styles.iconBtn, active && styles.iconBtnActive]}
+                    onPress={() => setActiveFriend(item.id)}
+                  >
+                    {active ? (
+                      <Check size={16} color={COLORS.text} />
+                    ) : (
+                      <Text style={styles.selectText}>Seç</Text>
+                    )}
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.iconBtnDanger}
+                    onPress={() => handleRemove(item)}
+                  >
+                    <Trash2 size={15} color={COLORS.danger} />
+                  </TouchableOpacity>
+                </View>
+              </View>
+            );
+          }}
+        />
+      )}
+
+      <BottomSheet
+        visible={addOpen}
+        onClose={() => setAddOpen(false)}
+        title="Yeni arkadaş ekle"
+        maxHeight={460}
+      >
+        <Text style={styles.sheetSub}>
+          Arkadaşının ChequePass kullanıcı adını girerek eşleş.
+        </Text>
+
+        <View style={styles.inputBox}>
+          <Text style={styles.at}>@</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="kullaniciadi"
+            placeholderTextColor={COLORS.textLight}
+            value={newUsername}
+            onChangeText={setNewUsername}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+        </View>
+
+        <Text style={[styles.sheetSub, { marginTop: SPACING.md }]}>İlişki türü</Text>
+        <View style={styles.relationRow}>
+          {[
+            { key: 'partner', label: 'Sevgili', Icon: Heart },
+            { key: 'friend', label: 'Arkadaş', Icon: Users },
+          ].map(({ key, label, Icon }) => {
+            const active = newRelation === key;
+            return (
+              <TouchableOpacity
+                key={key}
+                style={[styles.relationPill, active && styles.relationPillActive]}
+                onPress={() => setNewRelation(key)}
+              >
+                <Icon size={15} color={active ? COLORS.text : COLORS.textMuted} />
+                <Text style={[styles.relationText, active && styles.relationTextActive]}>
+                  {label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+
+        <TouchableOpacity style={[styles.primaryBtn, { marginTop: SPACING.lg }]} onPress={handleAdd}>
+          <Text style={styles.primaryBtnText}>Arkadaş Ekle</Text>
+        </TouchableOpacity>
+      </BottomSheet>
+    </SafeAreaView>
+  );
+};
+
+const styles = StyleSheet.create({
+  safe: { flex: 1, backgroundColor: COLORS.background },
+  titleWrap: { paddingHorizontal: SPACING.lg, paddingBottom: SPACING.sm },
+  pageTitle: { fontFamily: FONTS.bold, fontSize: 28, color: COLORS.text, letterSpacing: -0.5 },
+  pageSub: { fontFamily: FONTS.regular, fontSize: 13, color: COLORS.textMuted, marginTop: 2 },
+  addBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: COLORS.text,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: RADIUS.pill,
+  },
+  addBtnText: { fontFamily: FONTS.semiBold, fontSize: 12, color: '#fff' },
+  searchWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: COLORS.surface,
+    marginHorizontal: SPACING.lg,
+    paddingHorizontal: 14,
+    height: 46,
+    borderRadius: RADIUS.md,
+    marginBottom: SPACING.md,
+    ...SHADOW.soft,
+  },
+  searchInput: {
+    flex: 1,
+    fontFamily: FONTS.regular,
+    fontSize: 13,
+    color: COLORS.text,
+  },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.surface,
+    padding: 12,
+    borderRadius: RADIUS.md,
+    ...SHADOW.soft,
+  },
+  rowActive: {
+    borderWidth: 2,
+    borderColor: COLORS.primaryDark,
+  },
+  name: { fontFamily: FONTS.semiBold, fontSize: 15, color: COLORS.text },
+  meta: { fontFamily: FONTS.regular, fontSize: 11.5, color: COLORS.textMuted, marginTop: 2 },
+  iconBtn: {
+    minWidth: 46,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: COLORS.background,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 10,
+  },
+  iconBtnActive: {
+    backgroundColor: COLORS.primary,
+  },
+  iconBtnDanger: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: '#fee2e2',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  selectText: { fontFamily: FONTS.semiBold, fontSize: 11, color: COLORS.text },
+  empty: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: SPACING.lg,
+  },
+  emptyTitle: {
+    fontFamily: FONTS.semiBold,
+    fontSize: 16,
+    color: COLORS.text,
+    marginTop: SPACING.md,
+  },
+  emptySub: {
+    fontFamily: FONTS.regular,
+    fontSize: 13,
+    color: COLORS.textMuted,
+    textAlign: 'center',
+    marginTop: 4,
+  },
+  primaryBtn: {
+    backgroundColor: COLORS.text,
+    paddingVertical: 14,
+    borderRadius: RADIUS.pill,
+    alignItems: 'center',
+  },
+  primaryBtnText: { fontFamily: FONTS.semiBold, fontSize: 14, color: '#fff' },
+  sheetSub: { fontFamily: FONTS.regular, fontSize: 13, color: COLORS.textMuted, marginBottom: 8 },
+  inputBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.background,
+    borderRadius: RADIUS.md,
+    paddingHorizontal: 14,
+    height: 50,
+    gap: 4,
+  },
+  at: { fontFamily: FONTS.semiBold, fontSize: 15, color: COLORS.textMuted },
+  input: {
+    flex: 1,
+    fontFamily: FONTS.regular,
+    fontSize: 14,
+    color: COLORS.text,
+  },
+  relationRow: { flexDirection: 'row', gap: 10 },
+  relationPill: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 12,
+    borderRadius: RADIUS.md,
+    backgroundColor: COLORS.background,
+    borderWidth: 1.5,
+    borderColor: 'transparent',
+  },
+  relationPillActive: {
+    backgroundColor: COLORS.primary + '40',
+    borderColor: COLORS.primaryDark,
+  },
+  relationText: { fontFamily: FONTS.medium, fontSize: 13, color: COLORS.textMuted },
+  relationTextActive: { color: COLORS.text, fontFamily: FONTS.semiBold },
+});
+
+export default FriendsScreen;

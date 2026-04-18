@@ -46,22 +46,22 @@ export const Colors = {
 };
 
 export const Typography = {
-  fontBrand:    'CormorantGaramond-Bold',
-  fontBrandSem: 'CormorantGaramond-SemiBold',
-  fontBody:     'DMSans-Regular',
-  fontBodyMed:  'DMSans-Medium',
-  fontBodySem:  'DMSans-SemiBold',
-  fontBodyLt:   'DMSans-Light',
+  fontBrand:    'System',
+  fontBrandSem: 'System',
+  fontBody:     'System',
+  fontBodyMed:  'System',
+  fontBodySem:  'System',
+  fontBodyLt:   'System',
 
-  display:   { fontSize: 34, fontFamily: 'CormorantGaramond-Bold',    color: Colors.textPrimary,   letterSpacing: -0.5, lineHeight: 40 },
-  h1:        { fontSize: 26, fontFamily: 'CormorantGaramond-Bold',    color: Colors.textPrimary,   letterSpacing: -0.3, lineHeight: 32 },
-  h2:        { fontSize: 20, fontFamily: 'DMSans-SemiBold',           color: Colors.textPrimary,   lineHeight: 26 },
-  h3:        { fontSize: 17, fontFamily: 'DMSans-SemiBold',           color: Colors.textPrimary,   lineHeight: 22 },
-  body:      { fontSize: 15, fontFamily: 'DMSans-Regular',            color: Colors.textPrimary,   lineHeight: 22 },
-  bodyMed:   { fontSize: 15, fontFamily: 'DMSans-Medium',             color: Colors.textPrimary,   lineHeight: 22 },
-  bodySm:    { fontSize: 13, fontFamily: 'DMSans-Regular',            color: Colors.textSecondary, lineHeight: 19 },
-  caption:   { fontSize: 11, fontFamily: 'DMSans-Medium',             color: Colors.textMuted,     letterSpacing: 0.06, lineHeight: 16 },
-  label:     { fontSize: 14, fontFamily: 'DMSans-SemiBold',           color: Colors.textPrimary,   lineHeight: 18 },
+  display:   { fontSize: 34, fontWeight: '700' as const, color: Colors.textPrimary,   letterSpacing: -0.5, lineHeight: 40 },
+  h1:        { fontSize: 26, fontWeight: '700' as const, color: Colors.textPrimary,   letterSpacing: -0.3, lineHeight: 32 },
+  h2:        { fontSize: 20, fontWeight: '600' as const, color: Colors.textPrimary,   lineHeight: 26 },
+  h3:        { fontSize: 17, fontWeight: '600' as const, color: Colors.textPrimary,   lineHeight: 22 },
+  body:      { fontSize: 15, fontWeight: '400' as const, color: Colors.textPrimary,   lineHeight: 22 },
+  bodyMed:   { fontSize: 15, fontWeight: '500' as const, color: Colors.textPrimary,   lineHeight: 22 },
+  bodySm:    { fontSize: 13, fontWeight: '400' as const, color: Colors.textSecondary, lineHeight: 19 },
+  caption:   { fontSize: 11, fontWeight: '500' as const, color: Colors.textMuted,     letterSpacing: 0.06, lineHeight: 16 },
+  label:     { fontSize: 14, fontWeight: '600' as const, color: Colors.textPrimary,   lineHeight: 18 },
 };
 
 export const Spacing = {
