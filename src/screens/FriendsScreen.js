@@ -1,7 +1,8 @@
 // src/screens/FriendsScreen.js
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput, Alert, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRoute } from '@react-navigation/native';
 import { Search, UserPlus, Heart, Users, Trash2, Check, X, Clock, Inbox } from 'lucide-react-native';
 import ScreenHeader from '../components/ScreenHeader';
 import AnimalAvatar from '../components/AnimalAvatar';
@@ -16,6 +17,13 @@ const TABS = [
   { key: 'requests', label: 'İstekler', Icon: Inbox },
 ];
 
+const firestoreToMillis = (ts) => {
+  if (!ts) return null;
+  if (typeof ts === 'number') return ts;
+  if (typeof ts.toMillis === 'function') return ts.toMillis();
+  return null;
+};
+
 const FriendsScreen = () => {
   const {
     user,
@@ -28,6 +36,7 @@ const FriendsScreen = () => {
     rejectFriendRequest,
   } = useApp();
 
+  const route = useRoute();
   const [tab, setTab] = useState('friends');
   const [query, setQuery] = useState('');
   const [addOpen, setAddOpen] = useState(false);
@@ -35,6 +44,13 @@ const FriendsScreen = () => {
   const [newRelation, setNewRelation] = useState('friend');
   const [sending, setSending] = useState(false);
   const [processingId, setProcessingId] = useState(null);
+
+  // Bildirimler ekranından "İstekler" sekmesine yönlendirme desteği
+  useEffect(() => {
+    if (route.params?.initialTab === 'requests') {
+      setTab('requests');
+    }
+  }, [route.params?.initialTab]);
 
   const filtered = friends.filter((f) =>
     f.username.toLowerCase().includes(query.toLowerCase())
@@ -138,6 +154,7 @@ const FriendsScreen = () => {
   const renderFriend = ({ item }) => {
     const active = item.id === activeFriendId;
     const processing = processingId === item.id;
+    const sinceMillis = firestoreToMillis(item.since);
     return (
       <View style={[styles.row, active && styles.rowActive]}>
         <AnimalAvatar type={item.avatar} size={52} />
@@ -150,7 +167,7 @@ const FriendsScreen = () => {
           </View>
           <Text style={styles.meta}>
             {item.relation === 'partner' ? 'Sevgili' : 'Arkadaş'}
-            {item.since?.toMillis && ` · ${formatDate(item.since.toMillis())}`}
+            {sinceMillis && ` · ${formatDate(sinceMillis)}`}
           </Text>
         </View>
         <View style={{ flexDirection: 'row', gap: 8 }}>
@@ -183,6 +200,7 @@ const FriendsScreen = () => {
 
   const renderRequest = ({ item }) => {
     const processing = processingId === item.id;
+    const createdMillis = firestoreToMillis(item.createdAt);
     return (
       <View style={styles.row}>
         <AnimalAvatar type={item.fromAvatar} size={52} />
@@ -195,7 +213,7 @@ const FriendsScreen = () => {
           </View>
           <Text style={styles.meta}>
             {item.relation === 'partner' ? 'Sevgili olarak' : 'Arkadaş olarak'} eklemek istiyor
-            {item.createdAt?.toMillis && ` · ${formatRelative(item.createdAt.toMillis())}`}
+            {createdMillis && ` · ${formatRelative(createdMillis)}`}
           </Text>
         </View>
         {processing ? (
@@ -240,7 +258,6 @@ const FriendsScreen = () => {
         </Text>
       </View>
 
-      {/* Tabs */}
       <View style={styles.tabs}>
         {TABS.map((t) => {
           const active = tab === t.key;
@@ -435,7 +452,6 @@ const styles = StyleSheet.create({
     gap: 6,
     paddingVertical: 10,
     borderRadius: RADIUS.pill,
-    position: 'relative',
   },
   tabActive: { backgroundColor: COLORS.primary },
   tabText: { fontFamily: FONTS.medium, fontSize: 13, color: COLORS.textMuted },

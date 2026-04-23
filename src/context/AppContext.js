@@ -41,10 +41,10 @@ const seedState = () => ({
   isOnboarded: false,
   freePassUsed: false,
   activeFriendId: null,
-  friends: [],            // artık Firestore'dan gelecek, seed boş
-  friendRequests: [],     // gelen istekler
-  cheques: [],            // hâlâ local - sonraki adımda Firestore'a taşıyacağız
-  notifications: [],      // hâlâ local
+  friends: [],            // Firestore'dan gelir
+  friendRequests: [],     // Firestore'dan gelir
+  cheques: [],            // hâlâ local (Adım 3'te Firestore'a taşınacak)
+  notifications: [],
   achievements: [
     { id: 'first_cheque', title: 'İlk Çek', description: 'İlk çekini kopardın', unlocked: false },
     { id: 'first_gift', title: 'Cömert Ruh', description: 'Bir çeki hediye ettin', unlocked: false },
@@ -71,14 +71,13 @@ export const AppProvider = ({ children }) => {
   const [hydrated, setHydrated] = useState(false);
   const [authReady, setAuthReady] = useState(false);
 
-  // ---- Load local state from AsyncStorage (user HARİÇ) ----
+  // ---- Load local state from AsyncStorage (user, friends, friendRequests HARİÇ) ----
   useEffect(() => {
     (async () => {
       try {
         const raw = await AsyncStorage.getItem(STORAGE_KEY);
         if (raw) {
           const parsed = JSON.parse(raw);
-          // user, friends, friendRequests Firebase'den geliyor - storage'dan çıkar
           const { user, friends, friendRequests, ...rest } = parsed;
           setState((prev) => ({ ...prev, ...rest }));
         }
@@ -127,7 +126,12 @@ export const AppProvider = ({ children }) => {
           setState((prev) => ({ ...prev, user: null }));
         }
       } else {
-        setState((prev) => ({ ...prev, user: null, friends: [], friendRequests: [] }));
+        setState((prev) => ({
+          ...prev,
+          user: null,
+          friends: [],
+          friendRequests: [],
+        }));
       }
       setAuthReady(true);
     });
@@ -135,7 +139,7 @@ export const AppProvider = ({ children }) => {
     return () => unsubscribe();
   }, []);
 
-  // ---- Friendships dinleyicisi (kullanıcı giriş yaptığında başlar) ----
+  // ---- Friendships real-time dinleyicisi ----
   useEffect(() => {
     if (!state.user?.uid) return;
 
@@ -150,7 +154,6 @@ export const AppProvider = ({ children }) => {
       (snap) => {
         const allRelations = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
-        // Kabul edilmiş arkadaşlar
         const accepted = allRelations
           .filter((r) => r.status === 'accepted')
           .map((r) => {
@@ -166,7 +169,6 @@ export const AppProvider = ({ children }) => {
             };
           });
 
-        // Gelen istekler (başkası göndermiş, ben kabul etmemişim)
         const requests = allRelations
           .filter((r) => r.status === 'pending' && r.requestedBy !== uid)
           .map((r) => {
@@ -183,12 +185,11 @@ export const AppProvider = ({ children }) => {
           });
 
         setState((prev) => {
-          // İlk arkadaş eklenmişse başarı rozeti kazan
           const achievements = prev.achievements.map((a) =>
             a.id === 'first_friend' && accepted.length > 0 ? { ...a, unlocked: true } : a
           );
 
-          // Yeni gelen istekleri bildirim olarak ekle (duplicate'i önle)
+          // Gelen istekleri bildirim olarak yaz (duplicate'i önle)
           let notifications = prev.notifications;
           requests.forEach((req) => {
             const notifId = `n_req_${req.id}`;
@@ -208,15 +209,28 @@ export const AppProvider = ({ children }) => {
             }
           });
 
+          // Artık gelmeyen (kabul/red edilmiş) istek bildirimlerini temizle
+          const activeRequestIds = new Set(requests.map((r) => `n_req_${r.id}`));
+          notifications = notifications.filter((n) => {
+            if (n.type !== 'friend_request') return true;
+            return activeRequestIds.has(n.id);
+          });
+
+          // Aktif arkadaş hâlâ listede yoksa ilk arkadaşa geç
+          let activeFriendId = prev.activeFriendId;
+          if (activeFriendId && !accepted.some((f) => f.id === activeFriendId)) {
+            activeFriendId = accepted.length > 0 ? accepted[0].id : null;
+          } else if (!activeFriendId && accepted.length > 0) {
+            activeFriendId = accepted[0].id;
+          }
+
           return {
             ...prev,
             friends: accepted,
             friendRequests: requests,
             achievements,
             notifications,
-            activeFriendId:
-              prev.activeFriendId ||
-              (accepted.length > 0 ? accepted[0].id : null),
+            activeFriendId,
           };
         });
       },
@@ -337,7 +351,7 @@ export const AppProvider = ({ children }) => {
     }
   }, []);
 
-  // ---- Local state actions (sonraki adımlarda Firestore'a taşınacak) ----
+  // ---- Local state actions (Adım 3'te Firestore'a taşınacak) ----
 
   const setOnboarded = useCallback(() => {
     setState((prev) => ({ ...prev, isOnboarded: true }));
@@ -350,6 +364,9 @@ export const AppProvider = ({ children }) => {
   const resolveCheque = useCallback((template, direction, note = '') => {
     setState((prev) => {
       if (!prev.user || !prev.activeFriendId) return prev;
+
+      const activeFriend = prev.friends.find((f) => f.id === prev.activeFriendId);
+      if (!activeFriend) return prev;
 
       if (direction === 'pass') {
         const achievements = prev.achievements.map((a) =>
@@ -374,8 +391,9 @@ export const AppProvider = ({ children }) => {
       }
 
       const id = 'c_' + Date.now();
-      const ownerId = direction === 'keep' ? prev.user.uid : prev.activeFriendId;
-      const fromId = direction === 'keep' ? prev.activeFriendId : prev.user.uid;
+      const otherUid = activeFriend.otherUid;
+      const ownerId = direction === 'keep' ? prev.user.uid : otherUid;
+      const fromId = direction === 'keep' ? otherUid : prev.user.uid;
       const toId = ownerId;
 
       const cheque = {
@@ -388,6 +406,7 @@ export const AppProvider = ({ children }) => {
         fromId,
         toId,
         friendId: prev.activeFriendId,
+        friendUid: otherUid,
         direction,
         createdAt: Date.now(),
         status: 'active',
@@ -468,16 +487,18 @@ export const AppProvider = ({ children }) => {
     if (!state.activeFriendId || !activeFriend) return { mine: [], theirs: [] };
     const otherUid = activeFriend.otherUid;
     const mine = state.cheques
-      .filter((c) => {
-        const matchesFriend = c.friendId === state.activeFriendId || c.friendId === otherUid;
-        return matchesFriend && c.ownerId === state.user?.uid;
-      })
+      .filter(
+        (c) =>
+          (c.friendId === state.activeFriendId || c.friendUid === otherUid) &&
+          c.ownerId === state.user?.uid
+      )
       .sort((a, b) => b.createdAt - a.createdAt);
     const theirs = state.cheques
-      .filter((c) => {
-        const matchesFriend = c.friendId === state.activeFriendId || c.friendId === otherUid;
-        return matchesFriend && c.ownerId !== state.user?.uid;
-      })
+      .filter(
+        (c) =>
+          (c.friendId === state.activeFriendId || c.friendUid === otherUid) &&
+          c.ownerId !== state.user?.uid
+      )
       .sort((a, b) => b.createdAt - a.createdAt);
     return { mine, theirs };
   }, [state.cheques, state.activeFriendId, state.user, activeFriend]);

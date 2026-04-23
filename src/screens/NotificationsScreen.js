@@ -2,6 +2,7 @@
 import React, { useEffect } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useNavigation } from '@react-navigation/native';
 import { Bell, Gift, Download, SkipForward, UserPlus, Sparkles, CheckCheck } from 'lucide-react-native';
 import ScreenHeader from '../components/ScreenHeader';
 import { COLORS, FONTS, RADIUS, SHADOW, SPACING } from '../theme/theme';
@@ -13,11 +14,13 @@ const ICON_MAP = {
   keep: { Icon: Download, bg: COLORS.secondary },
   pass: { Icon: SkipForward, bg: COLORS.border },
   friend: { Icon: UserPlus, bg: COLORS.primary },
+  friend_request: { Icon: UserPlus, bg: COLORS.secondary },
   system: { Icon: Sparkles, bg: COLORS.secondary },
 };
 
 const NotificationsScreen = () => {
   const { notifications, markAllNotificationsRead, unreadCount } = useApp();
+  const navigation = useNavigation();
 
   useEffect(() => {
     if (unreadCount > 0) {
@@ -26,10 +29,17 @@ const NotificationsScreen = () => {
     }
   }, [unreadCount, markAllNotificationsRead]);
 
+  const handleNotifPress = (item) => {
+    if (item.type === 'friend_request') {
+      navigation.navigate('Friends', { initialTab: 'requests' });
+    }
+  };
+
   const renderItem = ({ item }) => {
     const { Icon, bg } = ICON_MAP[item.type] || ICON_MAP.system;
-    return (
-      <View style={[styles.item, !item.read && styles.itemUnread]}>
+    const clickable = item.type === 'friend_request';
+    const content = (
+      <>
         <View style={[styles.iconCircle, { backgroundColor: bg }]}>
           <Icon size={18} color={COLORS.text} />
         </View>
@@ -41,8 +51,21 @@ const NotificationsScreen = () => {
           <Text style={styles.itemTime}>{formatRelative(item.createdAt)}</Text>
         </View>
         {!item.read && <View style={styles.dot} />}
-      </View>
+      </>
     );
+
+    if (clickable) {
+      return (
+        <TouchableOpacity
+          style={[styles.item, !item.read && styles.itemUnread]}
+          onPress={() => handleNotifPress(item)}
+          activeOpacity={0.85}
+        >
+          {content}
+        </TouchableOpacity>
+      );
+    }
+    return <View style={[styles.item, !item.read && styles.itemUnread]}>{content}</View>;
   };
 
   return (
@@ -61,7 +84,7 @@ const NotificationsScreen = () => {
       <View style={styles.titleWrap}>
         <Text style={styles.pageTitle}>Bildirimler</Text>
         <Text style={styles.pageSub}>
-          {notifications.length} bildirim{unreadCount > 0 ? ` • ${unreadCount} okunmamış` : ''}
+          {notifications.length} bildirim{unreadCount > 0 ? ` · ${unreadCount} okunmamış` : ''}
         </Text>
       </View>
 

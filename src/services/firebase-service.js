@@ -111,18 +111,15 @@ const friendshipId = (uid1, uid2) => {
 export const sendFriendRequest = async ({ sender, targetUsername, relation = 'friend' }) => {
   const cleanTarget = targetUsername.trim().toLowerCase();
 
-  // Kendini eklemeye çalışıyor mu?
   if (sender.username.toLowerCase() === cleanTarget) {
     throw new Error('Kendini ekleyemezsin');
   }
 
-  // Hedef kullanıcıyı bul
   const targetUser = await findUserByUsername(cleanTarget);
   if (!targetUser) {
     throw new Error('Bu kullanıcı adıyla kimse bulunamadı');
   }
 
-  // Zaten ilişki var mı?
   const fId = friendshipId(sender.uid, targetUser.uid);
   const existing = await getDoc(doc(db, 'friendships', fId));
   if (existing.exists()) {
@@ -142,7 +139,6 @@ export const sendFriendRequest = async ({ sender, targetUsername, relation = 'fr
     }
   }
 
-  // Arkadaşlık dokümanını yaz
   await setDoc(doc(db, 'friendships', fId), {
     userIds: [sender.uid, targetUser.uid],
     users: {
