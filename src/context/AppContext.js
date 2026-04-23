@@ -11,7 +11,17 @@ import {
   sendPasswordResetEmail,
   deleteUser,
 } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
+import {
+  doc,
+  getDoc,
+  collection,
+  query,
+  where,
+  onSnapshot,
+  updateDoc,
+  deleteDoc,
+  serverTimestamp,
+} from 'firebase/firestore';
 import { auth, db } from '../config/firebase';
 import {
   writeUserAndUsername,
@@ -31,9 +41,10 @@ const seedState = () => ({
   isOnboarded: false,
   freePassUsed: false,
   activeFriendId: null,
-  friends: [],
-  cheques: [],
-  notifications: [],
+  friends: [],            // artık Firestore'dan gelecek, seed boş
+  friendRequests: [],     // gelen istekler
+  cheques: [],            // hâlâ local - sonraki adımda Firestore'a taşıyacağız
+  notifications: [],      // hâlâ local
   achievements: [
     { id: 'first_cheque', title: 'İlk Çek', description: 'İlk çekini kopardın', unlocked: false },
     { id: 'first_gift', title: 'Cömert Ruh', description: 'Bir çeki hediye ettin', unlocked: false },
@@ -60,13 +71,15 @@ export const AppProvider = ({ children }) => {
   const [hydrated, setHydrated] = useState(false);
   const [authReady, setAuthReady] = useState(false);
 
+  // ---- Load local state from AsyncStorage (user HARİÇ) ----
   useEffect(() => {
     (async () => {
       try {
         const raw = await AsyncStorage.getItem(STORAGE_KEY);
         if (raw) {
           const parsed = JSON.parse(raw);
-          const { user, ...rest } = parsed;
+          // user, friends, friendRequests Firebase'den geliyor - storage'dan çıkar
+          const { user, friends, friendRequests, ...rest } = parsed;
           setState((prev) => ({ ...prev, ...rest }));
         }
       } catch (e) {
@@ -77,11 +90,10 @@ export const AppProvider = ({ children }) => {
     })();
   }, []);
 
-  // Firebase Auth dinleyicisi
+  // ---- Firebase Auth dinleyicisi ----
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (currentUser) {
-        // Email doğrulanmamışsa oturumu kapat, state'i null yap
         if (!currentUser.emailVerified) {
           console.log('Email not verified, signing out');
           await fbSignOut(auth);
@@ -90,7 +102,6 @@ export const AppProvider = ({ children }) => {
           return;
         }
 
-        // Firestore'dan profil çek
         try {
           const profileSnap = await getDoc(doc(db, 'users', currentUser.uid));
           if (profileSnap.exists()) {
@@ -116,7 +127,7 @@ export const AppProvider = ({ children }) => {
           setState((prev) => ({ ...prev, user: null }));
         }
       } else {
-        setState((prev) => ({ ...prev, user: null }));
+        setState((prev) => ({ ...prev, user: null, friends: [], friendRequests: [] }));
       }
       setAuthReady(true);
     });
@@ -124,25 +135,116 @@ export const AppProvider = ({ children }) => {
     return () => unsubscribe();
   }, []);
 
+  // ---- Friendships dinleyicisi (kullanıcı giriş yaptığında başlar) ----
+  useEffect(() => {
+    if (!state.user?.uid) return;
+
+    const uid = state.user.uid;
+    const q = query(
+      collection(db, 'friendships'),
+      where('userIds', 'array-contains', uid)
+    );
+
+    const unsubscribe = onSnapshot(
+      q,
+      (snap) => {
+        const allRelations = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+        // Kabul edilmiş arkadaşlar
+        const accepted = allRelations
+          .filter((r) => r.status === 'accepted')
+          .map((r) => {
+            const otherUid = r.userIds.find((id) => id !== uid);
+            const otherInfo = r.users?.[otherUid] || {};
+            return {
+              id: r.id,
+              otherUid,
+              username: otherInfo.username || 'bilinmeyen',
+              avatar: otherInfo.avatar || null,
+              relation: otherInfo.relation || 'friend',
+              since: r.acceptedAt || r.createdAt,
+            };
+          });
+
+        // Gelen istekler (başkası göndermiş, ben kabul etmemişim)
+        const requests = allRelations
+          .filter((r) => r.status === 'pending' && r.requestedBy !== uid)
+          .map((r) => {
+            const otherUid = r.userIds.find((id) => id !== uid);
+            const otherInfo = r.users?.[otherUid] || {};
+            return {
+              id: r.id,
+              fromUid: otherUid,
+              fromUsername: otherInfo.username || 'bilinmeyen',
+              fromAvatar: otherInfo.avatar || null,
+              relation: otherInfo.relation || 'friend',
+              createdAt: r.createdAt,
+            };
+          });
+
+        setState((prev) => {
+          // İlk arkadaş eklenmişse başarı rozeti kazan
+          const achievements = prev.achievements.map((a) =>
+            a.id === 'first_friend' && accepted.length > 0 ? { ...a, unlocked: true } : a
+          );
+
+          // Yeni gelen istekleri bildirim olarak ekle (duplicate'i önle)
+          let notifications = prev.notifications;
+          requests.forEach((req) => {
+            const notifId = `n_req_${req.id}`;
+            if (!notifications.some((n) => n.id === notifId)) {
+              notifications = [
+                {
+                  id: notifId,
+                  title: 'Arkadaşlık isteği',
+                  body: `@${req.fromUsername} seninle eşleşmek istiyor`,
+                  createdAt: req.createdAt?.toMillis?.() || Date.now(),
+                  read: false,
+                  type: 'friend_request',
+                  payload: { friendshipId: req.id },
+                },
+                ...notifications,
+              ];
+            }
+          });
+
+          return {
+            ...prev,
+            friends: accepted,
+            friendRequests: requests,
+            achievements,
+            notifications,
+            activeFriendId:
+              prev.activeFriendId ||
+              (accepted.length > 0 ? accepted[0].id : null),
+          };
+        });
+      },
+      (error) => {
+        console.error('Friendships listener error:', error);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [state.user?.uid]);
+
+  // ---- Persist (user, friends, friendRequests HARİÇ) ----
   useEffect(() => {
     if (!hydrated) return;
-    const { user, ...rest } = state;
+    const { user, friends, friendRequests, ...rest } = state;
     AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(rest)).catch(() => {});
   }, [state, hydrated]);
 
-  // ---- Actions -----------------------------------------------------
+  // ---- Auth actions -------------------------------------------------
 
   const signUp = useCallback(async ({ username, email, password }) => {
-    // 1) Format validasyonu
     const validation = validateUsername(username);
     if (!validation.valid) throw new Error(validation.error);
     const cleanUsername = validation.value;
 
-    // 2) Username müsait mi?
     const available = await checkUsernameAvailable(cleanUsername);
     if (!available) throw new Error('Bu kullanıcı adı zaten alınmış');
 
-    // 3) Firebase Auth hesabı oluştur
     const credential = await createUserWithEmailAndPassword(
       auth,
       email.trim().toLowerCase(),
@@ -150,18 +252,14 @@ export const AppProvider = ({ children }) => {
     );
     const createdUser = credential.user;
 
-    // 4) Token'ı zorla yenile - Firestore kurallarının auth.uid'yi görmesi için kritik
     await createdUser.getIdToken(true);
 
-    // 5) Email doğrulama linki gönder (önce bunu, çünkü Firestore yazımı başarısız olursa
-    //    kullanıcıyı sileceğiz ama mail yine gitmiş olacak - sorun değil, o hesap artık yok)
     try {
       await sendEmailVerification(createdUser);
     } catch (verifyErr) {
       console.warn('Verification email failed (continuing):', verifyErr);
     }
 
-    // 6) Firestore'a yaz (transaction değil, iki ayrı setDoc - ve cleanup ile)
     try {
       await writeUserAndUsername({
         uid: createdUser.uid,
@@ -170,7 +268,6 @@ export const AppProvider = ({ children }) => {
         avatar: randomAvatar(),
       });
     } catch (err) {
-      // Firestore yazımı başarısız olursa auth hesabını sil
       console.error('Firestore write failed, deleting auth user:', err);
       try {
         await deleteUser(createdUser);
@@ -180,9 +277,6 @@ export const AppProvider = ({ children }) => {
       throw err;
     }
 
-    // 7) Signup tamamlandı. Şimdi oturumu kapat ki kullanıcı emailini doğruladıktan
-    //    sonra tekrar login olsun. Bu onAuthStateChanged'in iki kez tetiklenmesini
-    //    engeller ve akışı temiz tutar.
     try {
       await fbSignOut(auth);
     } catch (e) {
@@ -194,11 +288,7 @@ export const AppProvider = ({ children }) => {
 
   const signIn = useCallback(async ({ email, password }) => {
     if (!email || !password) throw new Error('E-posta ve şifre gerekli');
-    await signInWithEmailAndPassword(
-      auth,
-      email.trim().toLowerCase(),
-      password
-    );
+    await signInWithEmailAndPassword(auth, email.trim().toLowerCase(), password);
   }, []);
 
   const signOut = useCallback(async () => {
@@ -215,7 +305,39 @@ export const AppProvider = ({ children }) => {
     await sendPasswordResetEmail(auth, email.trim().toLowerCase());
   }, []);
 
-  // ---- Local state fonksiyonları (sonraki adımlarda Firestore'a taşınacak) ----
+  // ---- Friendship actions ------------------------------------------
+
+  const acceptFriendRequest = useCallback(async (friendshipId) => {
+    try {
+      await updateDoc(doc(db, 'friendships', friendshipId), {
+        status: 'accepted',
+        acceptedAt: serverTimestamp(),
+      });
+    } catch (e) {
+      console.error('Accept failed:', e);
+      throw new Error('Kabul edilemedi: ' + (e.message || 'bilinmeyen hata'));
+    }
+  }, []);
+
+  const rejectFriendRequest = useCallback(async (friendshipId) => {
+    try {
+      await deleteDoc(doc(db, 'friendships', friendshipId));
+    } catch (e) {
+      console.error('Reject failed:', e);
+      throw new Error('Reddedilemedi: ' + (e.message || 'bilinmeyen hata'));
+    }
+  }, []);
+
+  const removeFriend = useCallback(async (friendshipId) => {
+    try {
+      await deleteDoc(doc(db, 'friendships', friendshipId));
+    } catch (e) {
+      console.error('Remove friend failed:', e);
+      throw new Error('Silinemedi: ' + (e.message || 'bilinmeyen hata'));
+    }
+  }, []);
+
+  // ---- Local state actions (sonraki adımlarda Firestore'a taşınacak) ----
 
   const setOnboarded = useCallback(() => {
     setState((prev) => ({ ...prev, isOnboarded: true }));
@@ -223,53 +345,6 @@ export const AppProvider = ({ children }) => {
 
   const setActiveFriend = useCallback((friendId) => {
     setState((prev) => ({ ...prev, activeFriendId: friendId }));
-  }, []);
-
-  const addFriend = useCallback((username, relation = 'friend') => {
-    if (!username) return;
-    setState((prev) => {
-      if (prev.friends.some((f) => f.username.toLowerCase() === username.toLowerCase())) {
-        return prev;
-      }
-      const friend = {
-        id: 'f_' + Date.now(),
-        username: username.trim(),
-        relation,
-        avatar: randomAvatar(),
-        since: Date.now(),
-      };
-      const achievements = prev.achievements.map((a) =>
-        a.id === 'first_friend' ? { ...a, unlocked: true } : a
-      );
-      return {
-        ...prev,
-        friends: [...prev.friends, friend],
-        activeFriendId: prev.activeFriendId || friend.id,
-        achievements,
-        notifications: [
-          {
-            id: 'n_' + Date.now(),
-            title: 'Yeni arkadaş',
-            body: `${friend.username} artık arkadaş listende!`,
-            createdAt: Date.now(),
-            read: false,
-            type: 'friend',
-          },
-          ...prev.notifications,
-        ],
-      };
-    });
-  }, []);
-
-  const removeFriend = useCallback((friendId) => {
-    setState((prev) => ({
-      ...prev,
-      friends: prev.friends.filter((f) => f.id !== friendId),
-      activeFriendId:
-        prev.activeFriendId === friendId
-          ? prev.friends.find((f) => f.id !== friendId)?.id || null
-          : prev.activeFriendId,
-    }));
   }, []);
 
   const resolveCheque = useCallback((template, direction, note = '') => {
@@ -382,21 +457,30 @@ export const AppProvider = ({ children }) => {
     }));
   }, []);
 
+  // ---- Computed ----------------------------------------------------
+
   const activeFriend = useMemo(
     () => state.friends.find((f) => f.id === state.activeFriendId) || null,
     [state.friends, state.activeFriendId]
   );
 
   const chequesForActiveFriend = useMemo(() => {
-    if (!state.activeFriendId) return { mine: [], theirs: [] };
+    if (!state.activeFriendId || !activeFriend) return { mine: [], theirs: [] };
+    const otherUid = activeFriend.otherUid;
     const mine = state.cheques
-      .filter((c) => c.friendId === state.activeFriendId && c.ownerId === state.user?.uid)
+      .filter((c) => {
+        const matchesFriend = c.friendId === state.activeFriendId || c.friendId === otherUid;
+        return matchesFriend && c.ownerId === state.user?.uid;
+      })
       .sort((a, b) => b.createdAt - a.createdAt);
     const theirs = state.cheques
-      .filter((c) => c.friendId === state.activeFriendId && c.ownerId !== state.user?.uid)
+      .filter((c) => {
+        const matchesFriend = c.friendId === state.activeFriendId || c.friendId === otherUid;
+        return matchesFriend && c.ownerId !== state.user?.uid;
+      })
       .sort((a, b) => b.createdAt - a.createdAt);
     return { mine, theirs };
-  }, [state.cheques, state.activeFriendId, state.user]);
+  }, [state.cheques, state.activeFriendId, state.user, activeFriend]);
 
   const unreadCount = useMemo(
     () => state.notifications.filter((n) => !n.read).length,
@@ -417,7 +501,8 @@ export const AppProvider = ({ children }) => {
       resetPassword,
       setOnboarded,
       setActiveFriend,
-      addFriend,
+      acceptFriendRequest,
+      rejectFriendRequest,
       removeFriend,
       resolveCheque,
       updateChequeNote,
@@ -439,7 +524,8 @@ export const AppProvider = ({ children }) => {
       resetPassword,
       setOnboarded,
       setActiveFriend,
-      addFriend,
+      acceptFriendRequest,
+      rejectFriendRequest,
       removeFriend,
       resolveCheque,
       updateChequeNote,
