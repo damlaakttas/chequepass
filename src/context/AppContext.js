@@ -2,28 +2,32 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, useMemo } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// --- YENİ EKLENEN FIREBASE İÇE AKTARMALARI ---
 import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   signOut as fbSignOut,
   onAuthStateChanged,
   sendEmailVerification,
+  sendPasswordResetEmail,
+  deleteUser,
 } from 'firebase/auth';
-import { doc, setDoc } from 'firebase/firestore';
-import { auth, db } from '../config/firebase'; // Az önce oluşturduğumuz bağlantı dosyası
-// ---------------------------------------------
+import { doc, getDoc } from 'firebase/firestore';
+import { auth, db } from '../config/firebase';
+import {
+  writeUserAndUsername,
+  checkUsernameAvailable,
+  validateUsername,
+} from '../services/firebase-service';
 
 const AppContext = createContext(null);
 
 const STORAGE_KEY = '@chequepass_state_v1';
 
-// ---- Seed data (ilk kurulumda) -----------------------------------------------
 const AVATAR_POOL = ['fox', 'panda', 'koala', 'bunny', 'cat', 'owl'];
 const randomAvatar = () => AVATAR_POOL[Math.floor(Math.random() * AVATAR_POOL.length)];
 
 const seedState = () => ({
-  user: null, // { uid, username, email, avatar, createdAt }
+  user: null,
   isOnboarded: false,
   freePassUsed: false,
   activeFriendId: null,
@@ -51,20 +55,18 @@ const seedState = () => ({
   ],
 });
 
-// ---- Provider ----------------------------------------------------------------
 export const AppProvider = ({ children }) => {
   const [state, setState] = useState(seedState());
   const [hydrated, setHydrated] = useState(false);
+  const [authReady, setAuthReady] = useState(false);
 
-  // Load from storage (Yerel ayarlar için)
   useEffect(() => {
     (async () => {
       try {
         const raw = await AsyncStorage.getItem(STORAGE_KEY);
         if (raw) {
           const parsed = JSON.parse(raw);
-          // user'ı Storage'dan değil, Firebase'den yöneteceğimiz için user'ı dahil etmiyoruz.
-          const { user, ...rest } = parsed; 
+          const { user, ...rest } = parsed;
           setState((prev) => ({ ...prev, ...rest }));
         }
       } catch (e) {
@@ -75,99 +77,146 @@ export const AppProvider = ({ children }) => {
     })();
   }, []);
 
-  // --- YENİ EKLENEN FIREBASE OTURUM DİNLEYİCİSİ ---
+  // Firebase Auth dinleyicisi
   useEffect(() => {
-    // Uygulama açıldığında Firebase'deki oturumu kontrol et
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (currentUser) {
-        // Kullanıcı giriş yapmışsa state'e ekle
-        setState((prev) => ({
-          ...prev,
-          user: {
-            uid: currentUser.uid,
-            email: currentUser.email,
-            // (Avatar ve Username gibi ekstra bilgileri Firestore'dan çekeceğiz, şimdilik null/boş)
-            username: currentUser.displayName || currentUser.email.split('@')[0],
-            avatar: null, 
+        // Email doğrulanmamışsa oturumu kapat, state'i null yap
+        if (!currentUser.emailVerified) {
+          console.log('Email not verified, signing out');
+          await fbSignOut(auth);
+          setState((prev) => ({ ...prev, user: null }));
+          setAuthReady(true);
+          return;
+        }
+
+        // Firestore'dan profil çek
+        try {
+          const profileSnap = await getDoc(doc(db, 'users', currentUser.uid));
+          if (profileSnap.exists()) {
+            const profile = profileSnap.data();
+            setState((prev) => ({
+              ...prev,
+              user: {
+                uid: currentUser.uid,
+                email: currentUser.email,
+                emailVerified: currentUser.emailVerified,
+                username: profile.username,
+                avatar: profile.avatar,
+                createdAt: profile.createdAt,
+              },
+            }));
+          } else {
+            console.warn('User has no Firestore profile, signing out');
+            await fbSignOut(auth);
+            setState((prev) => ({ ...prev, user: null }));
           }
-        }));
+        } catch (err) {
+          console.error('Profile fetch failed', err);
+          setState((prev) => ({ ...prev, user: null }));
+        }
       } else {
-        // Çıkış yapmışsa user'ı temizle
         setState((prev) => ({ ...prev, user: null }));
       }
+      setAuthReady(true);
     });
 
-    return () => unsubscribe(); // Component silinirse dinlemeyi bırak
+    return () => unsubscribe();
   }, []);
-  // ------------------------------------------------
 
-  // Persist on change
   useEffect(() => {
     if (!hydrated) return;
-    AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(state)).catch(() => {});
+    const { user, ...rest } = state;
+    AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(rest)).catch(() => {});
   }, [state, hydrated]);
 
-  // ---- Actions ---------------------------------------------------------------
+  // ---- Actions -----------------------------------------------------
 
-  // --- YENİ FIREBASE KAYIT OLMA (SIGNUP) ---
   const signUp = useCallback(async ({ username, email, password }) => {
-    if (!username || !email || !password) throw new Error('Tüm alanları doldur');
-    
+    // 1) Format validasyonu
+    const validation = validateUsername(username);
+    if (!validation.valid) throw new Error(validation.error);
+    const cleanUsername = validation.value;
+
+    // 2) Username müsait mi?
+    const available = await checkUsernameAvailable(cleanUsername);
+    if (!available) throw new Error('Bu kullanıcı adı zaten alınmış');
+
+    // 3) Firebase Auth hesabı oluştur
+    const credential = await createUserWithEmailAndPassword(
+      auth,
+      email.trim().toLowerCase(),
+      password
+    );
+    const createdUser = credential.user;
+
+    // 4) Token'ı zorla yenile - Firestore kurallarının auth.uid'yi görmesi için kritik
+    await createdUser.getIdToken(true);
+
+    // 5) Email doğrulama linki gönder (önce bunu, çünkü Firestore yazımı başarısız olursa
+    //    kullanıcıyı sileceğiz ama mail yine gitmiş olacak - sorun değil, o hesap artık yok)
     try {
-      // 1. Firebase Auth'da kullanıcı oluştur
-      const credential = await createUserWithEmailAndPassword(auth, email, password);
-      
-      // 2. Doğrulama maili gönder
-      await sendEmailVerification(credential.user);
-      
-      // 3. Kullanıcının ekstra bilgilerini Firestore veritabanına kaydet
-      await setDoc(doc(db, 'users', credential.user.uid), {
-        username: username.trim(),
+      await sendEmailVerification(createdUser);
+    } catch (verifyErr) {
+      console.warn('Verification email failed (continuing):', verifyErr);
+    }
+
+    // 6) Firestore'a yaz (transaction değil, iki ayrı setDoc - ve cleanup ile)
+    try {
+      await writeUserAndUsername({
+        uid: createdUser.uid,
+        username: cleanUsername,
         email: email.trim().toLowerCase(),
-        avatar: randomAvatar(), // Rastgele avatar ata
-        createdAt: Date.now(),
+        avatar: randomAvatar(),
       });
-
-      // Firebase zaten onAuthStateChanged ile user'ı güncelleyecek.
-      // (Demo arkadaş ekleme mantığı Firestore'a geçince düzeltilecek, şimdilik kaldırıldı)
-
-    } catch (error) {
-      console.error("Kayıt Hatası:", error.message);
-      throw error;
+    } catch (err) {
+      // Firestore yazımı başarısız olursa auth hesabını sil
+      console.error('Firestore write failed, deleting auth user:', err);
+      try {
+        await deleteUser(createdUser);
+      } catch (cleanupErr) {
+        console.warn('Auth cleanup also failed:', cleanupErr);
+      }
+      throw err;
     }
-  }, []);
-  // ------------------------------------------
 
-  // --- YENİ FIREBASE GİRİŞ YAPMA (SIGNIN) ---
-  const signIn = useCallback(async ({ email, password }) => {
-    if (!email || !password) throw new Error('Email ve şifre gerekli');
-    
+    // 7) Signup tamamlandı. Şimdi oturumu kapat ki kullanıcı emailini doğruladıktan
+    //    sonra tekrar login olsun. Bu onAuthStateChanged'in iki kez tetiklenmesini
+    //    engeller ve akışı temiz tutar.
     try {
-      // Sadece Firebase'e giriş yapmasını söyle. 
-      // İşlem başarılı olursa yukarıdaki onAuthStateChanged otomatik olarak user state'ini dolduracak.
-      await signInWithEmailAndPassword(auth, email, password);
-    } catch (error) {
-      console.error("Giriş Hatası:", error.message);
-      throw error;
+      await fbSignOut(auth);
+    } catch (e) {
+      console.warn('Post-signup sign out failed:', e);
     }
-  }, []);
-  // ------------------------------------------
 
-  // --- YENİ FIREBASE ÇIKIŞ YAPMA (SIGNOUT) ---
+    return createdUser;
+  }, []);
+
+  const signIn = useCallback(async ({ email, password }) => {
+    if (!email || !password) throw new Error('E-posta ve şifre gerekli');
+    await signInWithEmailAndPassword(
+      auth,
+      email.trim().toLowerCase(),
+      password
+    );
+  }, []);
+
   const signOut = useCallback(async () => {
     try {
       await fbSignOut(auth);
-      // Yerel state'i de sıfırla
-      setState(seedState()); 
-    } catch (error) {
-      console.error("Çıkış Hatası:", error.message);
+    } catch (e) {
+      console.warn('Sign out failed', e);
     }
+    setState(seedState());
   }, []);
-  // -------------------------------------------
 
+  const resetPassword = useCallback(async (email) => {
+    if (!email) throw new Error('E-posta gerekli');
+    await sendPasswordResetEmail(auth, email.trim().toLowerCase());
+  }, []);
 
-  // --- AŞAĞIDAKİ DİĞER FONKSİYONLAR (MOCK ÇEK/ARKADAŞ İŞLEMLERİ) ŞİMDİLİK AYNI KALIYOR ---
-  
+  // ---- Local state fonksiyonları (sonraki adımlarda Firestore'a taşınacak) ----
+
   const setOnboarded = useCallback(() => {
     setState((prev) => ({ ...prev, isOnboarded: true }));
   }, []);
@@ -180,7 +229,7 @@ export const AppProvider = ({ children }) => {
     if (!username) return;
     setState((prev) => {
       if (prev.friends.some((f) => f.username.toLowerCase() === username.toLowerCase())) {
-        return prev; // zaten eklenmiş
+        return prev;
       }
       const friend = {
         id: 'f_' + Date.now(),
@@ -333,7 +382,6 @@ export const AppProvider = ({ children }) => {
     }));
   }, []);
 
-  // ---- Computed --------------------------------------------------------------
   const activeFriend = useMemo(
     () => state.friends.find((f) => f.id === state.activeFriendId) || null,
     [state.friends, state.activeFriendId]
@@ -359,12 +407,14 @@ export const AppProvider = ({ children }) => {
     () => ({
       ...state,
       hydrated,
+      authReady,
       activeFriend,
       chequesForActiveFriend,
       unreadCount,
       signUp,
       signIn,
       signOut,
+      resetPassword,
       setOnboarded,
       setActiveFriend,
       addFriend,
@@ -379,12 +429,14 @@ export const AppProvider = ({ children }) => {
     [
       state,
       hydrated,
+      authReady,
       activeFriend,
       chequesForActiveFriend,
       unreadCount,
       signUp,
       signIn,
       signOut,
+      resetPassword,
       setOnboarded,
       setActiveFriend,
       addFriend,

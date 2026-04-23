@@ -13,50 +13,190 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Mail, Lock, User, Eye, EyeOff, ArrowRight } from 'lucide-react-native';
+import { Mail, Lock, User, Eye, EyeOff, ArrowRight, Check, X } from 'lucide-react-native';
+import { sendEmailVerification, signInWithEmailAndPassword } from 'firebase/auth';
 import AppLogo from '../components/AppLogo';
 import BottomSheet from '../components/BottomSheet';
 import { COLORS, FONTS, RADIUS, SHADOW, SPACING } from '../theme/theme';
 import { useApp } from '../context/AppContext';
 import { validateEmail } from '../utils/helpers';
+import {
+  checkUsernameAvailable,
+  validateUsername,
+} from '../services/firebase-service';
+import { auth } from '../config/firebase';
 
 const MODE = { LOGIN: 'login', SIGNUP: 'signup', FORGOT: 'forgot' };
 
+// Firebase Auth error kodlarını Türkçe'ye çevir
+const translateAuthError = (code) => {
+  const map = {
+    'auth/email-already-in-use': 'Bu e-posta zaten kayıtlı',
+    'auth/invalid-email': 'Geçersiz e-posta adresi',
+    'auth/weak-password': 'Şifre çok zayıf, en az 6 karakter olmalı',
+    'auth/user-not-found': 'Bu e-posta ile kayıtlı kullanıcı bulunamadı',
+    'auth/wrong-password': 'Hatalı şifre',
+    'auth/invalid-credential': 'E-posta veya şifre hatalı',
+    'auth/too-many-requests': 'Çok fazla deneme yapıldı, birazdan tekrar dene',
+    'auth/network-request-failed': 'İnternet bağlantını kontrol et',
+    'auth/user-disabled': 'Bu hesap devre dışı bırakılmış',
+  };
+  return map[code] || null;
+};
+
 const AuthScreen = () => {
-  const { signIn, signUp } = useApp();
+  const { signIn, signUp, resetPassword } = useApp();
   const [mode, setMode] = useState(MODE.LOGIN);
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPass, setShowPass] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [legalOpen, setLegalOpen] = useState(null); // 'terms' | 'privacy' | null
+  const [legalOpen, setLegalOpen] = useState(null);
+
+  // Username live check state
+  // status: 'idle' | 'checking' | 'available' | 'taken' | 'invalid'
+  const [usernameStatus, setUsernameStatus] = useState('idle');
+  const [usernameMsg, setUsernameMsg] = useState('');
+
+  const checkTimerRef = React.useRef(null);
+
+  const onUsernameChange = (text) => {
+    setUsername(text);
+
+    if (checkTimerRef.current) {
+      clearTimeout(checkTimerRef.current);
+    }
+
+    if (!text.trim()) {
+      setUsernameStatus('idle');
+      setUsernameMsg('');
+      return;
+    }
+
+    const validation = validateUsername(text);
+    if (!validation.valid) {
+      setUsernameStatus('invalid');
+      setUsernameMsg(validation.error);
+      return;
+    }
+
+    setUsernameStatus('checking');
+    setUsernameMsg('Kontrol ediliyor...');
+    checkTimerRef.current = setTimeout(async () => {
+      try {
+        const available = await checkUsernameAvailable(validation.value);
+        if (available) {
+          setUsernameStatus('available');
+          setUsernameMsg('Bu kullanıcı adı müsait');
+        } else {
+          setUsernameStatus('taken');
+          setUsernameMsg('Bu kullanıcı adı zaten alınmış');
+        }
+      } catch (e) {
+        setUsernameStatus('idle');
+        setUsernameMsg('');
+      }
+    }, 500);
+  };
+
+  // Email doğrulanmamış kullanıcıya "yeniden gönder" seçeneği sun
+  const handleUnverifiedLogin = async (userEmail, userPassword) => {
+    try {
+      // Geçici olarak giriş yap, sendEmailVerification çağır, sonra yine çıkış
+      const credential = await signInWithEmailAndPassword(
+        auth,
+        userEmail.trim().toLowerCase(),
+        userPassword
+      );
+      await sendEmailVerification(credential.user);
+      await auth.signOut();
+      Alert.alert('Gönderildi', 'Doğrulama linki yeniden gönderildi. Gelen kutunu kontrol et.');
+    } catch (e) {
+      Alert.alert('Hata', 'Link gönderilemedi. Birazdan tekrar dene.');
+    }
+  };
 
   const handleSubmit = async () => {
     try {
       setLoading(true);
+
       if (mode === MODE.LOGIN) {
         if (!validateEmail(email)) throw new Error('Geçerli bir e-posta gir');
+        if (!password) throw new Error('Şifreni gir');
+
         await signIn({ email, password });
+
+        // signIn başarılı. Şimdi emailVerified kontrolü yap.
+        // onAuthStateChanged doğrulanmamışsa otomatik signOut yapacak
+        // ama kullanıcıya net mesaj verelim.
+        setTimeout(() => {
+          const current = auth.currentUser;
+          if (current && !current.emailVerified) {
+            const savedEmail = email;
+            const savedPassword = password;
+            Alert.alert(
+              'Email doğrulanmamış',
+              'Giriş yapabilmek için önce email adresini doğrulaman gerekiyor. Gelen kutunu kontrol et.',
+              [
+                {
+                  text: 'Yeniden gönder',
+                  onPress: () => handleUnverifiedLogin(savedEmail, savedPassword),
+                },
+                { text: 'Tamam', style: 'cancel' },
+              ]
+            );
+          }
+        }, 600);
       } else if (mode === MODE.SIGNUP) {
-        if (!username.trim()) throw new Error('Kullanıcı adı gerekli');
+        const validation = validateUsername(username);
+        if (!validation.valid) throw new Error(validation.error);
+        if (usernameStatus === 'taken') {
+          throw new Error('Bu kullanıcı adı zaten alınmış');
+        }
         if (!validateEmail(email)) throw new Error('Geçerli bir e-posta gir');
         if (password.length < 6) throw new Error('Şifre en az 6 karakter olmalı');
-        await signUp({ username, email, password });
+
+        await signUp({ username: validation.value, email, password });
+
         Alert.alert(
-          'E-posta doğrulama',
-          'Doğrulama linki e-postana gönderildi. (Demo: otomatik doğrulandı sayıldı.)'
+          'Hesabın oluşturuldu 🎉',
+          `${email.trim()} adresine doğrulama linki gönderildi. Linke tıkladıktan sonra giriş yapabilirsin.`,
+          [
+            {
+              text: 'Tamam',
+              onPress: () => {
+                setMode(MODE.LOGIN);
+                setPassword('');
+                setUsername('');
+                setUsernameStatus('idle');
+                setUsernameMsg('');
+              },
+            },
+          ]
         );
       } else if (mode === MODE.FORGOT) {
         if (!validateEmail(email)) throw new Error('Geçerli bir e-posta gir');
-        Alert.alert('Şifre sıfırlama', 'Sıfırlama bağlantısı e-postana gönderildi.');
-        setMode(MODE.LOGIN);
+        await resetPassword(email);
+        Alert.alert(
+          'Bağlantı gönderildi',
+          'E-posta adresine şifre sıfırlama bağlantısı gönderildi.',
+          [{ text: 'Tamam', onPress: () => setMode(MODE.LOGIN) }]
+        );
       }
     } catch (e) {
-      Alert.alert('Hata', e.message);
+      const friendly = e.code ? translateAuthError(e.code) : null;
+      Alert.alert('Hata', friendly || e.message || 'Bir şeyler ters gitti');
     } finally {
       setLoading(false);
     }
+  };
+
+  const switchMode = (next) => {
+    setMode(next);
+    setPassword('');
+    setUsernameStatus('idle');
+    setUsernameMsg('');
   };
 
   const titleMap = {
@@ -69,6 +209,32 @@ const AuthScreen = () => {
     [MODE.SIGNUP]: 'Birkaç saniyede hesap oluştur ve eğlenceye başla.',
     [MODE.FORGOT]: 'E-posta adresine sıfırlama bağlantısı gönderelim.',
   };
+
+  const renderUsernameStatusIcon = () => {
+    if (usernameStatus === 'checking') {
+      return <ActivityIndicator size="small" color={COLORS.textMuted} />;
+    }
+    if (usernameStatus === 'available') {
+      return <Check size={18} color={COLORS.success} />;
+    }
+    if (usernameStatus === 'taken' || usernameStatus === 'invalid') {
+      return <X size={18} color={COLORS.danger} />;
+    }
+    return null;
+  };
+
+  const getStatusColor = () => {
+    if (usernameStatus === 'available') return COLORS.success;
+    if (usernameStatus === 'taken' || usernameStatus === 'invalid') return COLORS.danger;
+    return COLORS.textMuted;
+  };
+
+  const submitDisabled =
+    loading ||
+    (mode === MODE.SIGNUP &&
+      (usernameStatus === 'checking' ||
+        usernameStatus === 'taken' ||
+        usernameStatus === 'invalid'));
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
@@ -94,18 +260,39 @@ const AuthScreen = () => {
 
           <View style={styles.form}>
             {mode === MODE.SIGNUP && (
-              <View style={styles.inputWrap}>
-                <User size={18} color={COLORS.textMuted} />
-                <TextInput
-                  style={styles.input}
-                  placeholder="Kullanıcı adı"
-                  placeholderTextColor={COLORS.textLight}
-                  value={username}
-                  onChangeText={setUsername}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                />
-              </View>
+              <>
+                <View
+                  style={[
+                    styles.inputWrap,
+                    usernameStatus === 'available' && {
+                      borderColor: COLORS.success,
+                      borderWidth: 1.5,
+                    },
+                    (usernameStatus === 'taken' || usernameStatus === 'invalid') && {
+                      borderColor: COLORS.danger,
+                      borderWidth: 1.5,
+                    },
+                  ]}
+                >
+                  <User size={18} color={COLORS.textMuted} />
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Kullanıcı adı"
+                    placeholderTextColor={COLORS.textLight}
+                    value={username}
+                    onChangeText={onUsernameChange}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    maxLength={20}
+                  />
+                  {renderUsernameStatusIcon()}
+                </View>
+                {!!usernameMsg && (
+                  <Text style={[styles.statusMsg, { color: getStatusColor() }]}>
+                    {usernameMsg}
+                  </Text>
+                )}
+              </>
             )}
 
             <View style={styles.inputWrap}>
@@ -147,16 +334,16 @@ const AuthScreen = () => {
             {mode === MODE.LOGIN && (
               <TouchableOpacity
                 style={styles.forgotBtn}
-                onPress={() => setMode(MODE.FORGOT)}
+                onPress={() => switchMode(MODE.FORGOT)}
               >
                 <Text style={styles.forgotText}>Şifremi unuttum</Text>
               </TouchableOpacity>
             )}
 
             <TouchableOpacity
-              style={[styles.submitBtn, loading && { opacity: 0.7 }]}
+              style={[styles.submitBtn, submitDisabled && { opacity: 0.5 }]}
               onPress={handleSubmit}
-              disabled={loading}
+              disabled={submitDisabled}
               activeOpacity={0.85}
             >
               {loading ? (
@@ -200,7 +387,9 @@ const AuthScreen = () => {
             </Text>
             <TouchableOpacity
               onPress={() =>
-                setMode(mode === MODE.SIGNUP || mode === MODE.FORGOT ? MODE.LOGIN : MODE.SIGNUP)
+                switchMode(
+                  mode === MODE.SIGNUP || mode === MODE.FORGOT ? MODE.LOGIN : MODE.SIGNUP
+                )
               }
             >
               <Text style={styles.switchLink}>
@@ -242,17 +431,17 @@ Bu şartları ayrıntılı olarak okuman önerilir.`;
 
 const PRIVACY_TEXT = `Gizliliğine saygı duyuyoruz.
 
-• Hangi verileri toplarız: kullanıcı adı, e-posta, uygulama içi etkileşim verileri (çek geçmişi, notlar, başarılar).
+- Hangi verileri toplarız: kullanıcı adı, e-posta, uygulama içi etkileşim verileri (çek geçmişi, notlar, başarılar).
 
-• Neden toplarız: hesabını yönetmek, eşleşme özelliğini sunmak ve deneyimini kişiselleştirmek için.
+- Neden toplarız: hesabını yönetmek, eşleşme özelliğini sunmak ve deneyimini kişiselleştirmek için.
 
-• Nerede saklanır: Firebase altyapısında şifreli olarak saklanır.
+- Nerede saklanır: Firebase altyapısında şifreli olarak saklanır.
 
-• Üçüncü taraflar: Yalnızca reklam gösterimi için AdMob servisi cihaz düzeyinde anonim tanımlayıcılara erişebilir.
+- Üçüncü taraflar: Yalnızca reklam gösterimi için AdMob servisi cihaz düzeyinde anonim tanımlayıcılara erişebilir.
 
-• Haklarınız: Hesap silme, veri dışa aktarma ve düzeltme taleplerinizi profil ekranından iletebilirsin.
+- Haklarınız: Hesap silme, veri dışa aktarma ve düzeltme taleplerinizi profil ekranından iletebilirsin.
 
-• İletişim: privacy@chequepass.app`;
+- İletişim: privacy@chequepass.app`;
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.background },
@@ -281,6 +470,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     height: 54,
     gap: 10,
+    borderWidth: 1.5,
+    borderColor: 'transparent',
     ...SHADOW.soft,
   },
   input: {
@@ -288,6 +479,12 @@ const styles = StyleSheet.create({
     fontFamily: FONTS.regular,
     fontSize: 14,
     color: COLORS.text,
+  },
+  statusMsg: {
+    fontFamily: FONTS.medium,
+    fontSize: 11.5,
+    paddingHorizontal: 6,
+    marginTop: -6,
   },
   forgotBtn: { alignSelf: 'flex-end', padding: 4 },
   forgotText: {
