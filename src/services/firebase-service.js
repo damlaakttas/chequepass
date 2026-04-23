@@ -5,10 +5,15 @@ import {
   getDoc,
   deleteDoc,
   serverTimestamp,
+  collection,
+  query,
+  where,
+  getDocs,
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
 
-// Username format kontrolü (3-20 karakter, harf/rakam/alt tire)
+// ---- Username validation ----------------------------------------------------
+
 export const validateUsername = (username) => {
   if (!username || typeof username !== 'string') {
     return { valid: false, error: 'Kullanıcı adı gerekli' };
@@ -29,7 +34,6 @@ export const validateUsername = (username) => {
   return { valid: true, value: trimmed };
 };
 
-// Username müsait mi?
 export const checkUsernameAvailable = async (username) => {
   const usernameLower = username.toLowerCase();
   try {
@@ -41,22 +45,13 @@ export const checkUsernameAvailable = async (username) => {
   }
 };
 
-/**
- * Signup flow için Firestore dokümanlarını yaz.
- * Transaction KULLANMAZ, iki ayrı setDoc çağırır.
- * Hata olursa yazılmış olanları geri temizler.
- */
-export const writeUserAndUsername = async ({
-  uid,
-  username,
-  email,
-  avatar,
-}) => {
+// ---- User profile helpers ---------------------------------------------------
+
+export const writeUserAndUsername = async ({ uid, username, email, avatar }) => {
   const usernameLower = username.toLowerCase();
   const userRef = doc(db, 'users', uid);
   const usernameRef = doc(db, 'usernames', usernameLower);
 
-  // Önce kullanıcı profilini yaz
   try {
     await setDoc(userRef, {
       uid,
@@ -71,7 +66,6 @@ export const writeUserAndUsername = async ({
     throw new Error('Profil kaydedilemedi: ' + (e.message || 'bilinmeyen hata'));
   }
 
-  // Sonra username rezervasyonunu yaz
   try {
     await setDoc(usernameRef, {
       uid,
@@ -79,7 +73,6 @@ export const writeUserAndUsername = async ({
     });
   } catch (e) {
     console.error('Username doc write failed:', e.code, e.message);
-    // Kullanıcı dokümanını temizle
     try {
       await deleteDoc(userRef);
     } catch (cleanupErr) {
@@ -89,7 +82,6 @@ export const writeUserAndUsername = async ({
   }
 };
 
-// Username'den kullanıcı bul
 export const findUserByUsername = async (username) => {
   const usernameLower = username.toLowerCase();
   const unameSnap = await getDoc(doc(db, 'usernames', usernameLower));
@@ -102,8 +94,73 @@ export const findUserByUsername = async (username) => {
   return { uid, ...userSnap.data() };
 };
 
-// UID'den kullanıcı profili getir
 export const getUserProfile = async (uid) => {
   const snap = await getDoc(doc(db, 'users', uid));
   return snap.exists() ? { uid, ...snap.data() } : null;
+};
+
+// ---- Friendship helpers -----------------------------------------------------
+
+const friendshipId = (uid1, uid2) => {
+  return [uid1, uid2].sort().join('_');
+};
+
+/**
+ * Arkadaşlık isteği gönder.
+ */
+export const sendFriendRequest = async ({ sender, targetUsername, relation = 'friend' }) => {
+  const cleanTarget = targetUsername.trim().toLowerCase();
+
+  // Kendini eklemeye çalışıyor mu?
+  if (sender.username.toLowerCase() === cleanTarget) {
+    throw new Error('Kendini ekleyemezsin');
+  }
+
+  // Hedef kullanıcıyı bul
+  const targetUser = await findUserByUsername(cleanTarget);
+  if (!targetUser) {
+    throw new Error('Bu kullanıcı adıyla kimse bulunamadı');
+  }
+
+  // Zaten ilişki var mı?
+  const fId = friendshipId(sender.uid, targetUser.uid);
+  const existing = await getDoc(doc(db, 'friendships', fId));
+  if (existing.exists()) {
+    const data = existing.data();
+    if (data.status === 'accepted') {
+      throw new Error('Bu kullanıcıyla zaten arkadaşsınız');
+    }
+    if (data.status === 'pending') {
+      if (data.requestedBy === sender.uid) {
+        throw new Error('Bu kullanıcıya zaten istek gönderdin');
+      } else {
+        throw new Error('Bu kullanıcı sana istek göndermiş, bildirimlerini kontrol et');
+      }
+    }
+    if (data.status === 'blocked') {
+      throw new Error('Bu kullanıcıyla ilişki kurulamaz');
+    }
+  }
+
+  // Arkadaşlık dokümanını yaz
+  await setDoc(doc(db, 'friendships', fId), {
+    userIds: [sender.uid, targetUser.uid],
+    users: {
+      [sender.uid]: {
+        username: sender.username,
+        avatar: sender.avatar || null,
+        relation,
+      },
+      [targetUser.uid]: {
+        username: targetUser.username,
+        avatar: targetUser.avatar || null,
+        relation,
+      },
+    },
+    status: 'pending',
+    requestedBy: sender.uid,
+    createdAt: serverTimestamp(),
+  });
+
+  return { friendshipId: fId, targetUsername: targetUser.username };
 };

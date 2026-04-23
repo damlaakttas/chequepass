@@ -1,6 +1,6 @@
 // src/screens/FriendsScreen.js
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput, Alert } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput, Alert, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Search, UserPlus, Heart, Users, Trash2, Check } from 'lucide-react-native';
 import ScreenHeader from '../components/ScreenHeader';
@@ -9,32 +9,54 @@ import BottomSheet from '../components/BottomSheet';
 import { COLORS, FONTS, RADIUS, SHADOW, SPACING } from '../theme/theme';
 import { useApp } from '../context/AppContext';
 import { formatDate } from '../utils/helpers';
+import { sendFriendRequest } from '../services/firebase-service';
 
 const FriendsScreen = () => {
-  const { friends, addFriend, removeFriend, activeFriendId, setActiveFriend } = useApp();
+  const { user, friends, removeFriend, activeFriendId, setActiveFriend } = useApp();
   const [query, setQuery] = useState('');
   const [addOpen, setAddOpen] = useState(false);
   const [newUsername, setNewUsername] = useState('');
   const [newRelation, setNewRelation] = useState('friend');
+  const [sending, setSending] = useState(false);
 
   const filtered = friends.filter((f) =>
     f.username.toLowerCase().includes(query.toLowerCase())
   );
 
-  const handleAdd = () => {
+  const handleAdd = async () => {
     const u = newUsername.trim();
     if (!u) {
-      Alert.alert('Kullanıcı adı gerekli');
+      Alert.alert('Hata', 'Kullanıcı adı gerekli');
       return;
     }
-    if (friends.some((f) => f.username.toLowerCase() === u.toLowerCase())) {
-      Alert.alert('Bu kullanıcı zaten arkadaşın');
+    if (!user) {
+      Alert.alert('Hata', 'Oturum bulunamadı');
       return;
     }
-    addFriend(u, newRelation);
-    setAddOpen(false);
-    setNewUsername('');
-    setNewRelation('friend');
+
+    try {
+      setSending(true);
+      const result = await sendFriendRequest({
+        sender: {
+          uid: user.uid,
+          username: user.username,
+          avatar: user.avatar,
+        },
+        targetUsername: u,
+        relation: newRelation,
+      });
+      setAddOpen(false);
+      setNewUsername('');
+      setNewRelation('friend');
+      Alert.alert(
+        'İstek gönderildi 🎉',
+        `@${result.targetUsername} kullanıcısına arkadaşlık isteği gönderildi. Kabul ettiğinde arkadaş listende görünecek.`
+      );
+    } catch (e) {
+      Alert.alert('Hata', e.message || 'İstek gönderilemedi');
+    } finally {
+      setSending(false);
+    }
   };
 
   const handleRemove = (f) => {
@@ -146,12 +168,17 @@ const FriendsScreen = () => {
 
       <BottomSheet
         visible={addOpen}
-        onClose={() => setAddOpen(false)}
+        onClose={() => {
+          if (!sending) {
+            setAddOpen(false);
+            setNewUsername('');
+          }
+        }}
         title="Yeni arkadaş ekle"
         maxHeight={460}
       >
         <Text style={styles.sheetSub}>
-          Arkadaşının ChequePass kullanıcı adını girerek eşleş.
+          Arkadaşının ChequePass kullanıcı adını girerek eşleş. İstek kabul edilince arkadaş listende görünür.
         </Text>
 
         <View style={styles.inputBox}>
@@ -164,6 +191,7 @@ const FriendsScreen = () => {
             onChangeText={setNewUsername}
             autoCapitalize="none"
             autoCorrect={false}
+            editable={!sending}
           />
         </View>
 
@@ -178,7 +206,8 @@ const FriendsScreen = () => {
               <TouchableOpacity
                 key={key}
                 style={[styles.relationPill, active && styles.relationPillActive]}
-                onPress={() => setNewRelation(key)}
+                onPress={() => !sending && setNewRelation(key)}
+                disabled={sending}
               >
                 <Icon size={15} color={active ? COLORS.text : COLORS.textMuted} />
                 <Text style={[styles.relationText, active && styles.relationTextActive]}>
@@ -189,8 +218,16 @@ const FriendsScreen = () => {
           })}
         </View>
 
-        <TouchableOpacity style={[styles.primaryBtn, { marginTop: SPACING.lg }]} onPress={handleAdd}>
-          <Text style={styles.primaryBtnText}>Arkadaş Ekle</Text>
+        <TouchableOpacity
+          style={[styles.primaryBtn, { marginTop: SPACING.lg }, sending && { opacity: 0.6 }]}
+          onPress={handleAdd}
+          disabled={sending}
+        >
+          {sending ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={styles.primaryBtnText}>İstek Gönder</Text>
+          )}
         </TouchableOpacity>
       </BottomSheet>
     </SafeAreaView>
@@ -291,7 +328,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   primaryBtnText: { fontFamily: FONTS.semiBold, fontSize: 14, color: '#fff' },
-  sheetSub: { fontFamily: FONTS.regular, fontSize: 13, color: COLORS.textMuted, marginBottom: 8 },
+  sheetSub: { fontFamily: FONTS.regular, fontSize: 13, color: COLORS.textMuted, marginBottom: 8, lineHeight: 19 },
   inputBox: {
     flexDirection: 'row',
     alignItems: 'center',
