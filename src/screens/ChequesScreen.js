@@ -29,11 +29,19 @@ const ChequesScreen = () => {
     setEditing(false);
   };
 
-  const saveNote = () => {
-    if (selected) {
-      updateChequeNote(selected.id, noteDraft);
+  const [saving, setSaving] = useState(false);
+
+  const saveNote = async () => {
+    if (!selected || saving) return;
+    setSaving(true);
+    try {
+      await updateChequeNote(selected.id, noteDraft);
       setSelected({ ...selected, reason: noteDraft });
       setEditing(false);
+    } catch (e) {
+      Alert.alert('Hata', e.message || 'Not kaydedilemedi');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -43,9 +51,13 @@ const ChequesScreen = () => {
       { text: 'Vazgeç', style: 'cancel' },
       {
         text: 'Evet, kullandım',
-        onPress: () => {
-          useChequeCard(selected.id);
-          setSelected(null);
+        onPress: async () => {
+          try {
+            await useChequeCard(selected.id);
+            setSelected(null);
+          } catch (e) {
+            Alert.alert('Hata', e.message || 'Çek kullanılamadı');
+          }
         },
       },
     ]);
@@ -80,7 +92,7 @@ const ChequesScreen = () => {
             {item.reason ? `"${item.reason}"` : item.subtitle}
           </Text>
           <View style={styles.rowMeta}>
-            <Text style={styles.metaText}>{formatRelative(item.createdAt)}</Text>
+            <Text style={styles.metaText}>{formatRelative(item.createdAtMillis)}</Text>
             {ownerLabel ? <Text style={styles.metaDot}>•</Text> : null}
             {ownerLabel ? <Text style={styles.metaText}>{ownerLabel}</Text> : null}
           </View>
@@ -156,7 +168,7 @@ const ChequesScreen = () => {
               </View>
               <View style={styles.dateBox}>
                 <Text style={styles.dateLabel}>TARİH</Text>
-                <Text style={styles.dateValue}>{formatDate(selected.createdAt)}</Text>
+                <Text style={styles.dateValue}>{formatDate(selected.createdAtMillis)}</Text>
               </View>
             </View>
 

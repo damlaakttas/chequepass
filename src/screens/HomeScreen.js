@@ -36,7 +36,7 @@ const HomeScreen = ({ navigation }) => {
     setHasCard(true);
   }, [chequeTemplates]);
 
-  const handleResolve = (direction) => {
+  const handleResolve = async (direction) => {
     if (!activeFriend) {
       Alert.alert('Arkadaş seç', 'Önce bir arkadaş eklemelisin veya seçmelisin.');
       setHasCard(false);
@@ -49,36 +49,66 @@ const HomeScreen = ({ navigation }) => {
       setHasCard(false);
       return;
     }
-    // Not bottom sheet - opsiyonel
+    if (direction === 'pass') {
+      // Pas Firestore'a yazılmaz, direkt çöz
+      try {
+        await resolveCheque(currentTemplate, 'pass', '');
+      } catch (e) {
+        Alert.alert('Hata', e.message || 'Pas geçilemedi');
+      }
+      setHasCard(false);
+      return;
+    }
+    // Keep / Gift → önce not bottom sheet
     setPendingResolve({ template: currentTemplate, direction });
     setNoteText('');
     setHasCard(false);
     setNoteSheetOpen(true);
   };
 
-  const finalizeResolve = () => {
-    if (!pendingResolve) return;
-    resolveCheque(pendingResolve.template, pendingResolve.direction, noteText);
-    setPendingResolve(null);
-    setNoteSheetOpen(false);
-    setNoteText('');
+  const [saving, setSaving] = useState(false);
+
+  const finalizeResolve = async () => {
+    if (!pendingResolve || saving) return;
+    setSaving(true);
+    try {
+      await resolveCheque(pendingResolve.template, pendingResolve.direction, noteText);
+      setPendingResolve(null);
+      setNoteSheetOpen(false);
+      setNoteText('');
+    } catch (e) {
+      Alert.alert('Hata', e.message || 'Çek kaydedilemedi');
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const skipNote = () => {
-    if (!pendingResolve) return;
-    resolveCheque(pendingResolve.template, pendingResolve.direction, '');
-    setPendingResolve(null);
-    setNoteSheetOpen(false);
-    setNoteText('');
+  const skipNote = async () => {
+    if (!pendingResolve || saving) return;
+    setSaving(true);
+    try {
+      await resolveCheque(pendingResolve.template, pendingResolve.direction, '');
+      setPendingResolve(null);
+      setNoteSheetOpen(false);
+      setNoteText('');
+    } catch (e) {
+      Alert.alert('Hata', e.message || 'Çek kaydedilemedi');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const watchAdForPass = () => {
     // Gerçek projede AdMob rewarded ad burada gösterilir
     setPassPromptOpen(false);
-    setTimeout(() => {
+    setTimeout(async () => {
       grantExtraPass();
       if (pendingPassTemplate) {
-        resolveCheque(pendingPassTemplate, 'pass', '');
+        try {
+          await resolveCheque(pendingPassTemplate, 'pass', '');
+        } catch (e) {
+          console.warn('Pass resolve failed:', e);
+        }
         setPendingPassTemplate(null);
       }
       Alert.alert('Ekstra pas kazandın!', 'Bir reklam izledin, pas hakkın yenilendi.');
@@ -189,8 +219,12 @@ const HomeScreen = ({ navigation }) => {
           <TouchableOpacity style={styles.ghostBtn} onPress={skipNote}>
             <Text style={styles.ghostBtnText}>Atla</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.primaryBtn, { flex: 1 }]} onPress={finalizeResolve}>
-            <Text style={styles.primaryBtnText}>Kaydet</Text>
+          <TouchableOpacity
+            style={[styles.primaryBtn, { flex: 1, opacity: saving ? 0.6 : 1 }]}
+            onPress={finalizeResolve}
+            disabled={saving}
+          >
+            <Text style={styles.primaryBtnText}>{saving ? 'Kaydediliyor...' : 'Kaydet'}</Text>
           </TouchableOpacity>
         </View>
       </BottomSheet>

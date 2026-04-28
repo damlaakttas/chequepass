@@ -160,3 +160,67 @@ export const sendFriendRequest = async ({ sender, targetUsername, relation = 'fr
 
   return { friendshipId: fId, targetUsername: targetUser.username };
 };
+// ---- Cheque helpers ---------------------------------------------------------
+
+/**
+ * Yeni bir çek oluştur (swipe sonrası Firestore'a yaz).
+ * @param {Object} params
+ * @param {Object} params.template - {title, subtitle, color}
+ * @param {string} params.friendshipId - aktif friendship id
+ * @param {string} params.ownerId - çekin sahibi (keep: ben, gift: arkadaş)
+ * @param {string} params.fromId - kim gönderdi
+ * @param {string} params.toId - kime gitti (ownerId ile aynı)
+ * @param {string} params.direction - 'keep' | 'gift'
+ * @param {string} params.reason - opsiyonel not
+ * @param {Array<string>} params.participants - [uid1, uid2]
+ * @returns {Promise<string>} yeni cheque id
+ */
+export const createCheque = async ({
+  template,
+  friendshipId,
+  ownerId,
+  fromId,
+  toId,
+  direction,
+  reason = '',
+  participants,
+}) => {
+  const ref = doc(collection(db, 'cheques'));
+  await setDoc(ref, {
+    friendshipId,
+    participants,
+    ownerId,
+    fromId,
+    toId,
+    title: template.title,
+    subtitle: template.subtitle,
+    color: template.color,
+    reason: reason || '',
+    direction,
+    status: 'active',
+    createdAt: serverTimestamp(),
+  });
+  return ref.id;
+};
+
+/**
+ * Çekin notunu güncelle. Sadece owner yapabilir (kural tarafında da kontrollü).
+ */
+export const updateChequeReason = async (chequeId, reason) => {
+  await setDoc(
+    doc(db, 'cheques', chequeId),
+    { reason: reason || '' },
+    { merge: true }
+  );
+};
+
+/**
+ * Çeki kullanıldı olarak işaretle.
+ */
+export const markChequeUsed = async (chequeId) => {
+  await setDoc(
+    doc(db, 'cheques', chequeId),
+    { status: 'used', usedAt: serverTimestamp() },
+    { merge: true }
+  );
+};
