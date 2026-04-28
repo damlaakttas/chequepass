@@ -1,6 +1,6 @@
 // src/screens/ChequesScreen.js
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput, Alert } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput, Alert, Keyboard } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Inbox, Gift, CheckCircle2, FileText, X, Edit3 } from 'lucide-react-native';
 import ScreenHeader from '../components/ScreenHeader';
@@ -9,9 +9,12 @@ import { COLORS, FONTS, RADIUS, SHADOW, SPACING } from '../theme/theme';
 import { useApp } from '../context/AppContext';
 import { formatDate, formatRelative } from '../utils/helpers';
 
+// Sekmeler:
+// mine    = bana ait olan çekler (sahibi benim, ister kendi aldığım ister karşı taraf hediye etmiş)
+// theirs  = karşı tarafa ait olan çekler (sahibi o, ister ben hediye ettim ister kendi aldı)
 const TABS = [
-  { key: 'mine', label: 'Benim Çeklerim', icon: Inbox },
-  { key: 'theirs', label: 'Karşı Tarafın', icon: Gift },
+  { key: 'mine', label: 'Bana Ait', icon: Inbox },
+  { key: 'theirs', label: 'Onun', icon: Gift },
 ];
 
 const ChequesScreen = () => {
@@ -20,8 +23,13 @@ const ChequesScreen = () => {
   const [selected, setSelected] = useState(null);
   const [noteDraft, setNoteDraft] = useState('');
   const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   const list = tab === 'mine' ? chequesForActiveFriend.mine : chequesForActiveFriend.theirs;
+
+  // Kullanılmamış sayıları (badge için)
+  const myActive = chequesForActiveFriend.mine.filter((c) => c.status !== 'used').length;
+  const theirActive = chequesForActiveFriend.theirs.filter((c) => c.status !== 'used').length;
 
   const openDetail = (c) => {
     setSelected(c);
@@ -29,10 +37,15 @@ const ChequesScreen = () => {
     setEditing(false);
   };
 
-  const [saving, setSaving] = useState(false);
+  const closeDetail = () => {
+    Keyboard.dismiss();
+    setSelected(null);
+    setEditing(false);
+  };
 
   const saveNote = async () => {
     if (!selected || saving) return;
+    Keyboard.dismiss();
     setSaving(true);
     try {
       await updateChequeNote(selected.id, noteDraft);
@@ -63,14 +76,31 @@ const ChequesScreen = () => {
     ]);
   };
 
-  const renderItem = ({ item }) => {
-    const ownerLabel =
-      item.ownerId === user?.uid
-        ? tab === 'mine'
-          ? `@${activeFriend?.username}'den geldi`
-          : ''
-        : `@${activeFriend?.username}'e gönderildi`;
+  /**
+   * Çekin nereden geldiğini açıklayan etiket.
+   * - direction === 'gift'  → karşı taraf hediye etti (ben aldıysam) ya da ben hediye ettim
+   * - direction === 'keep' → kim çektiyse kendine aldı
+   */
+  const getOriginLabel = (item) => {
+    const myUid = user?.uid;
+    const friendName = activeFriend?.username || 'arkadaş';
 
+    if (item.direction === 'gift') {
+      // hediye akışı
+      if (item.ownerId === myUid) {
+        return `@${friendName} hediye etti`;
+      }
+      return `Sen @${friendName}'e hediye ettin`;
+    }
+    // keep: kim aldıysa kendine almış
+    if (item.ownerId === myUid) {
+      return 'Kendine aldın';
+    }
+    return `@${friendName} kendine aldı`;
+  };
+
+  const renderItem = ({ item }) => {
+    const originLabel = getOriginLabel(item);
     return (
       <TouchableOpacity
         style={styles.row}
@@ -93,8 +123,8 @@ const ChequesScreen = () => {
           </Text>
           <View style={styles.rowMeta}>
             <Text style={styles.metaText}>{formatRelative(item.createdAtMillis)}</Text>
-            {ownerLabel ? <Text style={styles.metaDot}>•</Text> : null}
-            {ownerLabel ? <Text style={styles.metaText}>{ownerLabel}</Text> : null}
+            <Text style={styles.metaDot}>•</Text>
+            <Text style={styles.metaText}>{originLabel}</Text>
           </View>
         </View>
       </TouchableOpacity>
@@ -106,7 +136,7 @@ const ChequesScreen = () => {
       <ScreenHeader />
 
       <View style={styles.titleWrap}>
-        <Text style={styles.pageTitle}>Çeklerim</Text>
+        <Text style={styles.pageTitle}>Çekler</Text>
         <Text style={styles.pageSub}>
           {activeFriend ? `@${activeFriend.username} ile olan tüm çekler` : 'Arkadaş seçilmedi'}
         </Text>
@@ -116,6 +146,7 @@ const ChequesScreen = () => {
         {TABS.map((t) => {
           const Icon = t.icon;
           const active = tab === t.key;
+          const count = t.key === 'mine' ? myActive : theirActive;
           return (
             <TouchableOpacity
               key={t.key}
@@ -125,19 +156,34 @@ const ChequesScreen = () => {
             >
               <Icon size={16} color={active ? COLORS.text : COLORS.textMuted} />
               <Text style={[styles.tabText, active && styles.tabTextActive]}>{t.label}</Text>
+              {count > 0 && (
+                <View style={[styles.countBadge, active && styles.countBadgeActive]}>
+                  <Text style={[styles.countText, active && styles.countTextActive]}>
+                    {count}
+                  </Text>
+                </View>
+              )}
             </TouchableOpacity>
           );
         })}
       </View>
 
-      {list.length === 0 ? (
+      {!activeFriend ? (
+        <View style={styles.empty}>
+          <FileText size={44} color={COLORS.textLight} />
+          <Text style={styles.emptyTitle}>Henüz arkadaş yok</Text>
+          <Text style={styles.emptySub}>
+            Çekleri görmek için bir arkadaş eklemen lazım.
+          </Text>
+        </View>
+      ) : list.length === 0 ? (
         <View style={styles.empty}>
           <FileText size={44} color={COLORS.textLight} />
           <Text style={styles.emptyTitle}>Henüz çek yok</Text>
           <Text style={styles.emptySub}>
             {tab === 'mine'
-              ? 'Kazandığın çekler burada görünecek.'
-              : 'Gönderdiğin çekler burada görünecek.'}
+              ? 'Sana ait çekler burada görünecek.'
+              : `@${activeFriend.username}'in çekleri burada görünecek.`}
           </Text>
         </View>
       ) : (
@@ -151,12 +197,12 @@ const ChequesScreen = () => {
         />
       )}
 
-      {/* Detail */}
+      {/* Detay modalı */}
       <BottomSheet
         visible={!!selected}
-        onClose={() => setSelected(null)}
+        onClose={closeDetail}
         title="Çek Detayı"
-        maxHeight={560}
+        maxHeight={620}
       >
         {selected && (
           <View>
@@ -166,11 +212,27 @@ const ChequesScreen = () => {
                 <Text style={styles.detailTitle}>{selected.title}</Text>
                 <Text style={styles.detailSub}>{selected.subtitle}</Text>
               </View>
-              <View style={styles.dateBox}>
-                <Text style={styles.dateLabel}>TARİH</Text>
-                <Text style={styles.dateValue}>{formatDate(selected.createdAtMillis)}</Text>
+            </View>
+
+            <View style={styles.detailMetaRow}>
+              <View style={styles.metaCell}>
+                <Text style={styles.metaCellLabel}>NEREDEN</Text>
+                <Text style={styles.metaCellValue}>{getOriginLabel(selected)}</Text>
+              </View>
+              <View style={styles.metaCell}>
+                <Text style={styles.metaCellLabel}>TARİH</Text>
+                <Text style={styles.metaCellValue}>{formatDate(selected.createdAtMillis)}</Text>
               </View>
             </View>
+
+            {selected.status === 'used' && selected.usedAtMillis && (
+              <View style={styles.usedRow}>
+                <CheckCircle2 size={14} color={COLORS.textMuted} />
+                <Text style={styles.usedRowText}>
+                  {formatDate(selected.usedAtMillis)} tarihinde kullanıldı
+                </Text>
+              </View>
+            )}
 
             <Text style={styles.sectionTitle}>Not</Text>
             {editing ? (
@@ -188,7 +250,9 @@ const ChequesScreen = () => {
                 <Text style={styles.noteText}>
                   {selected.reason
                     ? selected.reason
-                    : 'Henüz bir not eklenmedi. Düzenlemek için dokun.'}
+                    : tab === 'mine'
+                      ? 'Henüz bir not eklenmedi. Düzenlemek için "Not ekle"ye dokun.'
+                      : 'Bu çek için not eklenmemiş.'}
                 </Text>
               </View>
             )}
@@ -201,23 +265,34 @@ const ChequesScreen = () => {
                     onPress={() => {
                       setEditing(false);
                       setNoteDraft(selected.reason || '');
+                      Keyboard.dismiss();
                     }}
+                    disabled={saving}
                   >
                     <X size={16} color={COLORS.text} />
                     <Text style={styles.ghostBtnText}>İptal</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity style={[styles.primaryBtn, { flex: 1 }]} onPress={saveNote}>
-                    <Text style={styles.primaryBtnText}>Kaydet</Text>
+                  <TouchableOpacity
+                    style={[styles.primaryBtn, { flex: 1, opacity: saving ? 0.6 : 1 }]}
+                    onPress={saveNote}
+                    disabled={saving}
+                  >
+                    <Text style={styles.primaryBtnText}>
+                      {saving ? 'Kaydediliyor...' : 'Kaydet'}
+                    </Text>
                   </TouchableOpacity>
                 </>
               ) : (
                 <>
-                  <TouchableOpacity style={styles.ghostBtn} onPress={() => setEditing(true)}>
-                    <Edit3 size={16} color={COLORS.text} />
-                    <Text style={styles.ghostBtnText}>
-                      {selected.reason ? 'Düzenle' : 'Not ekle'}
-                    </Text>
-                  </TouchableOpacity>
+                  {/* Sadece sahibi (yani mine sekmesi) not düzenleyebilir */}
+                  {tab === 'mine' && selected.status !== 'used' && (
+                    <TouchableOpacity style={styles.ghostBtn} onPress={() => setEditing(true)}>
+                      <Edit3 size={16} color={COLORS.text} />
+                      <Text style={styles.ghostBtnText}>
+                        {selected.reason ? 'Düzenle' : 'Not ekle'}
+                      </Text>
+                    </TouchableOpacity>
+                  )}
                   {tab === 'mine' && selected.status !== 'used' && (
                     <TouchableOpacity
                       style={[styles.primaryBtn, { flex: 1 }]}
@@ -263,6 +338,26 @@ const styles = StyleSheet.create({
   tabActive: { backgroundColor: COLORS.primary },
   tabText: { fontFamily: FONTS.medium, fontSize: 13, color: COLORS.textMuted },
   tabTextActive: { color: COLORS.text, fontFamily: FONTS.semiBold },
+  countBadge: {
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    paddingHorizontal: 6,
+    backgroundColor: COLORS.background,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  countBadgeActive: {
+    backgroundColor: COLORS.text,
+  },
+  countText: {
+    fontFamily: FONTS.bold,
+    fontSize: 10,
+    color: COLORS.textMuted,
+  },
+  countTextActive: {
+    color: '#fff',
+  },
   row: {
     flexDirection: 'row',
     backgroundColor: COLORS.surface,
@@ -278,7 +373,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingTop: 12,
   },
-  rowTitle: { fontFamily: FONTS.semiBold, fontSize: 15, color: COLORS.text },
+  rowTitle: { fontFamily: FONTS.semiBold, fontSize: 15, color: COLORS.text, flex: 1 },
   usedBadge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -328,19 +423,49 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    marginBottom: SPACING.lg,
+    marginBottom: SPACING.md,
   },
   detailStripe: { width: 6, height: 48, borderRadius: 3 },
   detailTitle: { fontFamily: FONTS.bold, fontSize: 18, color: COLORS.text },
   detailSub: { fontFamily: FONTS.regular, fontSize: 12, color: COLORS.textMuted, marginTop: 2 },
-  dateBox: { alignItems: 'flex-end' },
-  dateLabel: {
+  detailMetaRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: SPACING.md,
+  },
+  metaCell: {
+    flex: 1,
+    backgroundColor: COLORS.background,
+    borderRadius: RADIUS.md,
+    padding: 12,
+  },
+  metaCellLabel: {
     fontFamily: FONTS.bold,
     fontSize: 9,
     letterSpacing: 1,
     color: COLORS.textLight,
   },
-  dateValue: { fontFamily: FONTS.semiBold, fontSize: 12, color: COLORS.text, marginTop: 2 },
+  metaCellValue: {
+    fontFamily: FONTS.semiBold,
+    fontSize: 12,
+    color: COLORS.text,
+    marginTop: 4,
+  },
+  usedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: COLORS.background,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: RADIUS.md,
+    marginBottom: SPACING.md,
+  },
+  usedRowText: {
+    fontFamily: FONTS.medium,
+    fontSize: 12,
+    color: COLORS.textMuted,
+  },
   sectionTitle: {
     fontFamily: FONTS.semiBold,
     fontSize: 13,

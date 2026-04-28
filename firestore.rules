@@ -14,6 +14,7 @@ service cloud.firestore {
     }
 
     // --- Usernames (atomik rezervasyon) ---
+    // Signup sırasında auth henüz tam yerleşmemiş olabilir, read açık tutuyoruz.
     match /usernames/{username} {
       allow read:   if true;
       allow create: if isAuth();
@@ -22,18 +23,23 @@ service cloud.firestore {
     }
 
     // --- Friendships ---
+    // KRİTİK: resource == null kontrolü, var olmayan doc'a getDoc() çağrısının
+    // permission-denied dönmemesi için. (Arkadaş ekleme sırasında "duplicate var mı?"
+    // kontrolünde bu çağrı yapılıyor.)
     match /friendships/{fid} {
-      allow read:   if isAuth() && request.auth.uid in resource.data.userIds;
+      allow get:    if isAuth() && (resource == null || request.auth.uid in resource.data.userIds);
+      allow list:   if isAuth();
       allow create: if isAuth() && request.auth.uid in request.resource.data.userIds;
       allow update: if isAuth() && request.auth.uid in resource.data.userIds;
       allow delete: if isAuth() && request.auth.uid in resource.data.userIds;
     }
 
-    // --- Cheques (ADIM 3) ---
+    // --- Cheques ---
     match /cheques/{cid} {
-      allow read:   if isAuth() && request.auth.uid in resource.data.participants;
+      allow get:    if isAuth() && (resource == null || request.auth.uid in resource.data.participants);
+      allow list:   if isAuth();
       allow create: if isAuth() && request.auth.uid in request.resource.data.participants;
-      // Sadece owner update edebilir (reason/status/usedAt)
+      // Sadece sahibi update edebilir (reason / status / usedAt)
       allow update: if isAuth() && request.auth.uid == resource.data.ownerId;
       allow delete: if false;
     }

@@ -1,6 +1,14 @@
 // src/screens/HomeScreen.js
 import React, { useEffect, useState, useCallback } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert, TextInput } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  Alert,
+  TextInput,
+  Keyboard,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Sparkles, PlayCircle, UserPlus } from 'lucide-react-native';
 import ScreenHeader from '../components/ScreenHeader';
@@ -27,8 +35,9 @@ const HomeScreen = ({ navigation }) => {
   const [passPromptOpen, setPassPromptOpen] = useState(false);
   const [pendingPassTemplate, setPendingPassTemplate] = useState(null);
   const [noteSheetOpen, setNoteSheetOpen] = useState(false);
-  const [pendingResolve, setPendingResolve] = useState(null); // {template, direction}
+  const [pendingResolve, setPendingResolve] = useState(null);
   const [noteText, setNoteText] = useState('');
+  const [saving, setSaving] = useState(false);
 
   const drawNewCard = useCallback(() => {
     const t = pickRandom(chequeTemplates);
@@ -42,15 +51,15 @@ const HomeScreen = ({ navigation }) => {
       setHasCard(false);
       return;
     }
+
     if (direction === 'pass' && freePassUsed) {
-      // Reklam izleme akışı
       setPendingPassTemplate(currentTemplate);
       setPassPromptOpen(true);
       setHasCard(false);
       return;
     }
+
     if (direction === 'pass') {
-      // Pas Firestore'a yazılmaz, direkt çöz
       try {
         await resolveCheque(currentTemplate, 'pass', '');
       } catch (e) {
@@ -59,17 +68,23 @@ const HomeScreen = ({ navigation }) => {
       setHasCard(false);
       return;
     }
-    // Keep / Gift → önce not bottom sheet
+
     setPendingResolve({ template: currentTemplate, direction });
     setNoteText('');
     setHasCard(false);
     setNoteSheetOpen(true);
   };
 
-  const [saving, setSaving] = useState(false);
+  const closeNoteSheet = () => {
+    Keyboard.dismiss();
+    setNoteSheetOpen(false);
+    setPendingResolve(null);
+    setNoteText('');
+  };
 
   const finalizeResolve = async () => {
     if (!pendingResolve || saving) return;
+    Keyboard.dismiss();
     setSaving(true);
     try {
       await resolveCheque(pendingResolve.template, pendingResolve.direction, noteText);
@@ -85,6 +100,7 @@ const HomeScreen = ({ navigation }) => {
 
   const skipNote = async () => {
     if (!pendingResolve || saving) return;
+    Keyboard.dismiss();
     setSaving(true);
     try {
       await resolveCheque(pendingResolve.template, pendingResolve.direction, '');
@@ -99,7 +115,6 @@ const HomeScreen = ({ navigation }) => {
   };
 
   const watchAdForPass = () => {
-    // Gerçek projede AdMob rewarded ad burada gösterilir
     setPassPromptOpen(false);
     setTimeout(async () => {
       grantExtraPass();
@@ -118,6 +133,14 @@ const HomeScreen = ({ navigation }) => {
   useEffect(() => {
     if (!hasCard && activeFriend) drawNewCard();
   }, [hasCard, activeFriend, drawNewCard]);
+
+  // Bu kişi için anlamlı çekim akışı: gift = "ona hediye", keep = "kendine al"
+  // ChequeCard tarafından zaten uygun ikonlar gösteriliyor.
+  const directionLabel = pendingResolve?.direction === 'gift'
+    ? `@${activeFriend?.username || 'arkadaşına'} hediye edeceksin`
+    : pendingResolve?.direction === 'keep'
+      ? 'Çeki kendine alacaksın'
+      : '';
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -165,11 +188,11 @@ const HomeScreen = ({ navigation }) => {
             <View style={styles.hintRow}>
               <View style={styles.hintPill}>
                 <Text style={styles.hintEmoji}>↑</Text>
-                <Text style={styles.hintLabel}>Gönder</Text>
+                <Text style={styles.hintLabel}>Hediye Et</Text>
               </View>
               <View style={styles.hintPill}>
                 <Text style={styles.hintEmoji}>↓</Text>
-                <Text style={styles.hintLabel}>Kendine</Text>
+                <Text style={styles.hintLabel}>Kendine Al</Text>
               </View>
               <View style={styles.hintPill}>
                 <Text style={styles.hintEmoji}>←</Text>
@@ -196,7 +219,7 @@ const HomeScreen = ({ navigation }) => {
       >
         <Text style={styles.modalBody}>
           Günlük ücretsiz pas hakkını kullandın. Ekstra bir pas hakkı kazanmak için kısa bir
-          reklam izleyebilirsin.
+          reklam izleyebilirsin. Pas hakkın 24 saat içinde otomatik yenilenir.
         </Text>
         <TouchableOpacity style={styles.watchBtn} onPress={watchAdForPass} activeOpacity={0.85}>
           <PlayCircle size={18} color="#fff" />
@@ -207,16 +230,28 @@ const HomeScreen = ({ navigation }) => {
       {/* Not bottom sheet */}
       <BottomSheet
         visible={noteSheetOpen}
-        onClose={skipNote}
-        title="Not eklemek ister misin?"
-        maxHeight={440}
+        onClose={closeNoteSheet}
+        title={directionLabel || 'Not eklemek ister misin?'}
+        maxHeight={520}
       >
         <Text style={styles.modalBody}>
-          Bu çekin kazanılma sebebini yazabilirsin. (Ör: Monopoly'de kaybettiğim için…)
+          İstersen bu çekin kazanılma sebebini yazabilirsin. (Ör: "Tabu'da kaybettiğim için")
         </Text>
-        <NoteInputSection value={noteText} onChange={setNoteText} />
-        <View style={{ flexDirection: 'row', gap: 10, marginTop: 8 }}>
-          <TouchableOpacity style={styles.ghostBtn} onPress={skipNote}>
+        <TextInput
+          style={styles.realNoteInput}
+          placeholder="Kısa bir not ekle..."
+          placeholderTextColor={COLORS.textLight}
+          value={noteText}
+          onChangeText={setNoteText}
+          multiline
+          maxLength={160}
+        />
+        <View style={{ flexDirection: 'row', gap: 10, marginTop: SPACING.md }}>
+          <TouchableOpacity
+            style={styles.ghostBtn}
+            onPress={skipNote}
+            disabled={saving}
+          >
             <Text style={styles.ghostBtnText}>Atla</Text>
           </TouchableOpacity>
           <TouchableOpacity
@@ -224,26 +259,15 @@ const HomeScreen = ({ navigation }) => {
             onPress={finalizeResolve}
             disabled={saving}
           >
-            <Text style={styles.primaryBtnText}>{saving ? 'Kaydediliyor...' : 'Kaydet'}</Text>
+            <Text style={styles.primaryBtnText}>
+              {saving ? 'Kaydediliyor...' : 'Kaydet'}
+            </Text>
           </TouchableOpacity>
         </View>
       </BottomSheet>
     </SafeAreaView>
   );
 };
-
-// Ayrı küçük bileşen - not girişi
-const NoteInputSection = ({ value, onChange }) => (
-  <TextInput
-    style={styles.realNoteInput}
-    placeholder="Kısa bir not ekle..."
-    placeholderTextColor={COLORS.textLight}
-    value={value}
-    onChangeText={onChange}
-    multiline
-    maxLength={160}
-  />
-);
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.background },
@@ -356,8 +380,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#fff',
   },
-  noteInputWrap: { display: 'none' },
-  noteInput: { display: 'none' },
   realNoteInput: {
     backgroundColor: COLORS.background,
     borderRadius: RADIUS.md,

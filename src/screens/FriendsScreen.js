@@ -17,13 +17,6 @@ const TABS = [
   { key: 'requests', label: 'İstekler', Icon: Inbox },
 ];
 
-const firestoreToMillis = (ts) => {
-  if (!ts) return null;
-  if (typeof ts === 'number') return ts;
-  if (typeof ts.toMillis === 'function') return ts.toMillis();
-  return null;
-};
-
 const FriendsScreen = () => {
   const {
     user,
@@ -45,7 +38,6 @@ const FriendsScreen = () => {
   const [sending, setSending] = useState(false);
   const [processingId, setProcessingId] = useState(null);
 
-  // Bildirimler ekranından "İstekler" sekmesine yönlendirme desteği
   useEffect(() => {
     if (route.params?.initialTab === 'requests') {
       setTab('requests');
@@ -95,7 +87,7 @@ const FriendsScreen = () => {
   const handleRemove = (f) => {
     Alert.alert(
       `@${f.username} silinsin mi?`,
-      'Bu kişiyle olan arkadaşlığın tamamen silinecek.',
+      'Bu kişiyle olan tüm çekleriniz, notlar ve geçmiş kalır ama ilişki silinir.',
       [
         { text: 'Vazgeç', style: 'cancel' },
         {
@@ -130,7 +122,7 @@ const FriendsScreen = () => {
   const handleReject = (req) => {
     Alert.alert(
       `@${req.fromUsername} reddedilsin mi?`,
-      'Bu isteği reddedersen tekrar gönderebilir.',
+      'Bu isteği reddedersen kullanıcı tekrar gönderebilir.',
       [
         { text: 'Vazgeç', style: 'cancel' },
         {
@@ -154,7 +146,6 @@ const FriendsScreen = () => {
   const renderFriend = ({ item }) => {
     const active = item.id === activeFriendId;
     const processing = processingId === item.id;
-    const sinceMillis = firestoreToMillis(item.since);
     return (
       <View style={[styles.row, active && styles.rowActive]}>
         <AnimalAvatar type={item.avatar} size={52} />
@@ -167,7 +158,7 @@ const FriendsScreen = () => {
           </View>
           <Text style={styles.meta}>
             {item.relation === 'partner' ? 'Sevgili' : 'Arkadaş'}
-            {sinceMillis && ` · ${formatDate(sinceMillis)}`}
+            {item.acceptedAtMillis && ` · ${formatDate(item.acceptedAtMillis)}`}
           </Text>
         </View>
         <View style={{ flexDirection: 'row', gap: 8 }}>
@@ -200,7 +191,6 @@ const FriendsScreen = () => {
 
   const renderRequest = ({ item }) => {
     const processing = processingId === item.id;
-    const createdMillis = firestoreToMillis(item.createdAt);
     return (
       <View style={styles.row}>
         <AnimalAvatar type={item.fromAvatar} size={52} />
@@ -213,7 +203,7 @@ const FriendsScreen = () => {
           </View>
           <Text style={styles.meta}>
             {item.relation === 'partner' ? 'Sevgili olarak' : 'Arkadaş olarak'} eklemek istiyor
-            {createdMillis && ` · ${formatRelative(createdMillis)}`}
+            {item.createdAtMillis && ` · ${formatRelative(item.createdAtMillis)}`}
           </Text>
         </View>
         {processing ? (
@@ -261,8 +251,8 @@ const FriendsScreen = () => {
       <View style={styles.tabs}>
         {TABS.map((t) => {
           const active = tab === t.key;
-          const { Icon } = t;
-          const badge = t.key === 'requests' ? friendRequests.length : 0;
+          const Icon = t.Icon;
+          const showBadge = t.key === 'requests' && friendRequests.length > 0;
           return (
             <TouchableOpacity
               key={t.key}
@@ -272,9 +262,9 @@ const FriendsScreen = () => {
             >
               <Icon size={16} color={active ? COLORS.text : COLORS.textMuted} />
               <Text style={[styles.tabText, active && styles.tabTextActive]}>{t.label}</Text>
-              {badge > 0 && (
+              {showBadge && (
                 <View style={styles.tabBadge}>
-                  <Text style={styles.tabBadgeText}>{badge}</Text>
+                  <Text style={styles.tabBadgeText}>{friendRequests.length}</Text>
                 </View>
               )}
             </TouchableOpacity>
@@ -284,37 +274,31 @@ const FriendsScreen = () => {
 
       {tab === 'friends' && (
         <>
-          <View style={styles.searchWrap}>
-            <Search size={16} color={COLORS.textMuted} />
-            <TextInput
-              style={styles.searchInput}
-              placeholder="Kullanıcı adı ara..."
-              placeholderTextColor={COLORS.textLight}
-              value={query}
-              onChangeText={setQuery}
-              autoCapitalize="none"
-            />
-          </View>
-
+          {friends.length > 0 && (
+            <View style={styles.searchWrap}>
+              <Search size={16} color={COLORS.textMuted} />
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Arkadaş ara..."
+                placeholderTextColor={COLORS.textLight}
+                value={query}
+                onChangeText={setQuery}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+            </View>
+          )}
           {filtered.length === 0 ? (
             <View style={styles.empty}>
               <Users size={44} color={COLORS.textLight} />
               <Text style={styles.emptyTitle}>
-                {friends.length === 0 ? 'Henüz arkadaş yok' : 'Sonuç bulunamadı'}
+                {friends.length === 0 ? 'Henüz arkadaşın yok' : 'Sonuç bulunamadı'}
               </Text>
               <Text style={styles.emptySub}>
                 {friends.length === 0
-                  ? 'Yeni arkadaş ekleyerek çek göndermeye başla.'
-                  : 'Farklı bir kullanıcı adı dene.'}
+                  ? '"Ekle" butonuna basıp ilk arkadaşını davet et.'
+                  : 'Farklı bir arama dene.'}
               </Text>
-              {friends.length === 0 && (
-                <TouchableOpacity
-                  style={[styles.primaryBtn, { marginTop: SPACING.lg }]}
-                  onPress={() => setAddOpen(true)}
-                >
-                  <Text style={styles.primaryBtnText}>İlk arkadaşını ekle</Text>
-                </TouchableOpacity>
-              )}
             </View>
           ) : (
             <FlatList

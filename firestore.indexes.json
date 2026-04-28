@@ -1,45 +1,13 @@
 {
   "indexes": [
     {
-      "collectionGroup": "coupons",
+      "collectionGroup": "cheques",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "winnerId",  "order": "ASCENDING" },
-        { "fieldPath": "createdAt", "order": "DESCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "coupons",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "winnerId",  "order": "ASCENDING" },
-        { "fieldPath": "matchId",   "order": "ASCENDING" },
-        { "fieldPath": "createdAt", "order": "DESCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "matches",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "participants",  "arrayConfig": "CONTAINS" },
-        { "fieldPath": "status",        "order": "ASCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "notifications",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "toUserId",   "order": "ASCENDING" },
-        { "fieldPath": "createdAt",  "order": "DESCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "friendRequests",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "toUserId", "order": "ASCENDING" },
-        { "fieldPath": "status",   "order": "ASCENDING" }
+        { "fieldPath": "participants", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "createdAt",    "order": "DESCENDING" }
       ]
     }
-  ]
+  ],
+  "fieldOverrides": []
 }

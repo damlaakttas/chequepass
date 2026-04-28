@@ -6,8 +6,8 @@ import {
   LogOut,
   Trophy,
   Users,
-  SkipForward,
   Gift,
+  Send,
   Mail,
   AtSign,
   Edit3,
@@ -25,11 +25,15 @@ const AVATAR_OPTIONS = ['fox', 'panda', 'koala', 'bunny', 'cat', 'owl'];
 const ProfileScreen = () => {
   const { user, friends, cheques, achievements, signOut, setAvatar } = useApp();
   const [avatarOpen, setAvatarOpen] = useState(false);
+  const [savingAvatar, setSavingAvatar] = useState(false);
 
+  // İstatistikler:
+  // - won:    bana ait olan tüm çekler (ister kendi aldım, ister hediye aldım)
+  // - gifted: ben göndermişim ve sahibi karşı taraf (yani hediye ettiklerim)
   const stats = useMemo(() => {
-    const won = cheques.filter((c) => c.ownerId === user?.uid).length;
-    const gifted = cheques.filter((c) => c.ownerId !== user?.uid && c.fromId === user?.uid).length;
-    const passed = 0; // pass geçmişi ayrı tutulmadığı için bildirimlerden alalım
+    if (!user?.uid) return { won: 0, gifted: 0, friends: 0 };
+    const won = cheques.filter((c) => c.ownerId === user.uid).length;
+    const gifted = cheques.filter((c) => c.ownerId !== user.uid && c.fromId === user.uid).length;
     return { won, gifted, friends: friends.length };
   }, [cheques, friends, user]);
 
@@ -40,6 +44,19 @@ const ProfileScreen = () => {
       { text: 'Vazgeç', style: 'cancel' },
       { text: 'Çıkış Yap', style: 'destructive', onPress: signOut },
     ]);
+  };
+
+  const handleAvatarSelect = async (key) => {
+    if (savingAvatar) return;
+    setSavingAvatar(true);
+    try {
+      await setAvatar(key);
+      setAvatarOpen(false);
+    } catch (e) {
+      Alert.alert('Hata', 'Avatar güncellenemedi.');
+    } finally {
+      setSavingAvatar(false);
+    }
   };
 
   if (!user) return null;
@@ -75,12 +92,12 @@ const ProfileScreen = () => {
           <View style={[styles.statCard, { backgroundColor: COLORS.primary }]}>
             <Gift size={18} color={COLORS.text} />
             <Text style={styles.statValue}>{stats.won}</Text>
-            <Text style={styles.statLabel}>Kazanılan</Text>
+            <Text style={styles.statLabel}>Sana Ait</Text>
           </View>
           <View style={[styles.statCard, { backgroundColor: COLORS.secondary }]}>
-            <SkipForward size={18} color={COLORS.text} />
+            <Send size={18} color={COLORS.text} />
             <Text style={styles.statValue}>{stats.gifted}</Text>
-            <Text style={styles.statLabel}>Hediye Edilen</Text>
+            <Text style={styles.statLabel}>Hediye Ettin</Text>
           </View>
           <View style={[styles.statCard, { backgroundColor: '#fff' }]}>
             <Users size={18} color={COLORS.text} />
@@ -102,10 +119,7 @@ const ProfileScreen = () => {
           </View>
           <View style={styles.achievementsList}>
             {achievements.map((a) => (
-              <View
-                key={a.id}
-                style={[styles.achievement, a.unlocked && styles.achievementUnlocked]}
-              >
+              <View key={a.id} style={styles.achievement}>
                 <View
                   style={[
                     styles.achievementIcon,
@@ -164,11 +178,11 @@ const ProfileScreen = () => {
 
       <BottomSheet
         visible={avatarOpen}
-        onClose={() => setAvatarOpen(false)}
+        onClose={() => !savingAvatar && setAvatarOpen(false)}
         title="Avatarını seç"
         maxHeight={420}
       >
-        <Text style={styles.avatarSub}>Favori hayvanını seç.</Text>
+        <Text style={styles.avatarSub}>Favori hayvanını seç. Arkadaşların seni böyle görecek.</Text>
         <View style={styles.avatarGrid}>
           {AVATAR_OPTIONS.map((key) => {
             const selected = (user.avatar || 'fox') === key;
@@ -176,10 +190,8 @@ const ProfileScreen = () => {
               <TouchableOpacity
                 key={key}
                 style={[styles.avatarOption, selected && styles.avatarOptionActive]}
-                onPress={() => {
-                  setAvatar(key);
-                  setAvatarOpen(false);
-                }}
+                onPress={() => handleAvatarSelect(key)}
+                disabled={savingAvatar}
                 activeOpacity={0.85}
               >
                 <AnimalAvatar type={key} size={64} />
@@ -294,7 +306,6 @@ const styles = StyleSheet.create({
     padding: 12,
     borderRadius: RADIUS.md,
   },
-  achievementUnlocked: {},
   achievementIcon: {
     width: 40,
     height: 40,

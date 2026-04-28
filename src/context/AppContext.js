@@ -1,5 +1,14 @@
 // src/context/AppContext.js
-import React, { createContext, useContext, useEffect, useState, useCallback, useMemo } from 'react';
+//
+// MIMARİ NOTLAR:
+// - Bildirimler artık state'te tutulmuyor; doğrudan cheques + friendRequests + local pass'lerden TÜRETİLİYOR.
+//   Bu sayede logout-login sonrası bildirimler kaybolmaz, zamanlar gerçek (Firestore createdAt'ten gelir).
+// - "Okundu" durumu ayrı bir AsyncStorage map'inde tutulur (`@chequepass_read_v1`).
+// - Pas geçme olayları local olarak `@chequepass_pass_events_v1` listesinde tutulur (max 50, en yeni en üstte).
+// - `isOnboarded` ayrı key'de tutulur ki signOut sonrası kaybolmasın.
+// - `freePassUsed` ve `lastPassResetAt` ile günde 1 ücretsiz pas mantığı.
+
+import React, { createContext, useContext, useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import {
@@ -31,11 +40,19 @@ import {
   createCheque,
   updateChequeReason,
   markChequeUsed,
+  updateUserAvatar,
 } from '../services/firebase-service';
 
 const AppContext = createContext(null);
 
 const STORAGE_KEY = '@chequepass_state_v1';
+const ONBOARDED_KEY = '@chequepass_onboarded_v1';
+const READ_KEY = '@chequepass_read_v1';            // { [notifId]: true }
+const PASS_EVENTS_KEY = '@chequepass_pass_events_v1'; // [{ id, title, ts }]
+const LAST_PASS_RESET_KEY = '@chequepass_last_pass_reset_v1';
+
+const PASS_EVENTS_MAX = 50;
+const PASS_RESET_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 saat
 
 const AVATAR_POOL = ['fox', 'panda', 'koala', 'bunny', 'cat', 'owl'];
 const randomAvatar = () => AVATAR_POOL[Math.floor(Math.random() * AVATAR_POOL.length)];
@@ -45,10 +62,11 @@ const seedState = () => ({
   isOnboarded: false,
   freePassUsed: false,
   activeFriendId: null,
-  friends: [],            // Firestore'dan gelir
-  friendRequests: [],     // Firestore'dan gelir
-  cheques: [],            // Firestore'dan gelir (Adım 3)
-  notifications: [],
+  friends: [],
+  friendRequests: [],
+  cheques: [],
+  passEvents: [],            // local pas geçmişi
+  readMap: {},               // { [notifId]: true }
   achievements: [
     { id: 'first_cheque', title: 'İlk Çek', description: 'İlk çekini kopardın', unlocked: false },
     { id: 'first_gift', title: 'Cömert Ruh', description: 'Bir çeki hediye ettin', unlocked: false },
@@ -70,28 +88,73 @@ const seedState = () => ({
   ],
 });
 
-// Firestore Timestamp → millis (client'ta henüz yazılmamışken null olabilir)
+// Firestore Timestamp → millis
 const tsToMillis = (ts) => {
-  if (!ts) return Date.now();
+  if (!ts) return null;
   if (typeof ts.toMillis === 'function') return ts.toMillis();
   if (typeof ts === 'number') return ts;
-  return Date.now();
+  if (ts.seconds) return ts.seconds * 1000;
+  return null;
 };
 
 export const AppProvider = ({ children }) => {
   const [state, setState] = useState(seedState());
   const [hydrated, setHydrated] = useState(false);
   const [authReady, setAuthReady] = useState(false);
+  const signupInProgressRef = useRef(false);
 
-  // ---- Load local state from AsyncStorage (user, friends, friendRequests, cheques HARİÇ) ----
+  // ---- Hydrate ----
   useEffect(() => {
     (async () => {
       try {
-        const raw = await AsyncStorage.getItem(STORAGE_KEY);
+        const [raw, onboardedRaw, readRaw, passRaw, lastResetRaw] = await Promise.all([
+          AsyncStorage.getItem(STORAGE_KEY),
+          AsyncStorage.getItem(ONBOARDED_KEY),
+          AsyncStorage.getItem(READ_KEY),
+          AsyncStorage.getItem(PASS_EVENTS_KEY),
+          AsyncStorage.getItem(LAST_PASS_RESET_KEY),
+        ]);
+
+        const isOnboarded = onboardedRaw === 'true';
+        let readMap = {};
+        try { readMap = readRaw ? JSON.parse(readRaw) : {}; } catch (e) { readMap = {}; }
+        let passEvents = [];
+        try { passEvents = passRaw ? JSON.parse(passRaw) : []; } catch (e) { passEvents = []; }
+
+        // Pas yenileme: 24 saat geçmiş mi?
+        let freePassUsed = false;
+        if (lastResetRaw) {
+          const lastReset = parseInt(lastResetRaw, 10);
+          if (!isNaN(lastReset) && Date.now() - lastReset < PASS_RESET_INTERVAL_MS) {
+            // 24 saat dolmamış → eski state'ten freePassUsed'i koru
+            if (raw) {
+              try {
+                const parsed = JSON.parse(raw);
+                freePassUsed = !!parsed.freePassUsed;
+              } catch (e) {}
+            }
+          }
+        }
+
         if (raw) {
           const parsed = JSON.parse(raw);
-          const { user, friends, friendRequests, cheques, ...rest } = parsed;
-          setState((prev) => ({ ...prev, ...rest }));
+          const { user, friends, friendRequests, cheques, notifications, ...rest } = parsed;
+          setState((prev) => ({
+            ...prev,
+            ...rest,
+            isOnboarded,
+            freePassUsed,
+            readMap,
+            passEvents,
+          }));
+        } else {
+          setState((prev) => ({
+            ...prev,
+            isOnboarded,
+            freePassUsed,
+            readMap,
+            passEvents,
+          }));
         }
       } catch (e) {
         console.warn('Hydrate failed', e);
@@ -101,9 +164,41 @@ export const AppProvider = ({ children }) => {
     })();
   }, []);
 
+  // ---- Persist (sadece UI tercihleri; user/friends/cheques HARİÇ) ----
+  useEffect(() => {
+    if (!hydrated) return;
+    const {
+      user,
+      friends,
+      friendRequests,
+      cheques,
+      passEvents,
+      readMap,
+      isOnboarded,
+      ...rest
+    } = state;
+    AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(rest)).catch(() => {});
+  }, [state, hydrated]);
+
+  // readMap ve passEvents ayrı persist
+  useEffect(() => {
+    if (!hydrated) return;
+    AsyncStorage.setItem(READ_KEY, JSON.stringify(state.readMap || {})).catch(() => {});
+  }, [state.readMap, hydrated]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    AsyncStorage.setItem(PASS_EVENTS_KEY, JSON.stringify(state.passEvents || [])).catch(() => {});
+  }, [state.passEvents, hydrated]);
+
   // ---- Firebase Auth dinleyicisi ----
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      if (signupInProgressRef.current) {
+        console.log('Signup in progress, skipping auth state handler');
+        return;
+      }
+
       if (currentUser) {
         if (!currentUser.emailVerified) {
           console.log('Email not verified, signing out');
@@ -178,7 +273,8 @@ export const AppProvider = ({ children }) => {
               username: otherInfo.username || 'bilinmeyen',
               avatar: otherInfo.avatar || null,
               relation: otherInfo.relation || 'friend',
-              since: r.acceptedAt || r.createdAt,
+              acceptedAtMillis: tsToMillis(r.acceptedAt) || tsToMillis(r.createdAt),
+              createdAtMillis: tsToMillis(r.createdAt),
             };
           });
 
@@ -193,7 +289,7 @@ export const AppProvider = ({ children }) => {
               fromUsername: otherInfo.username || 'bilinmeyen',
               fromAvatar: otherInfo.avatar || null,
               relation: otherInfo.relation || 'friend',
-              createdAt: r.createdAt,
+              createdAtMillis: tsToMillis(r.createdAt),
             };
           });
 
@@ -202,34 +298,7 @@ export const AppProvider = ({ children }) => {
             a.id === 'first_friend' && accepted.length > 0 ? { ...a, unlocked: true } : a
           );
 
-          // Gelen istekleri bildirim olarak yaz (duplicate'i önle)
-          let notifications = prev.notifications;
-          requests.forEach((req) => {
-            const notifId = `n_req_${req.id}`;
-            if (!notifications.some((n) => n.id === notifId)) {
-              notifications = [
-                {
-                  id: notifId,
-                  title: 'Arkadaşlık isteği',
-                  body: `@${req.fromUsername} seninle eşleşmek istiyor`,
-                  createdAt: req.createdAt?.toMillis?.() || Date.now(),
-                  read: false,
-                  type: 'friend_request',
-                  payload: { friendshipId: req.id },
-                },
-                ...notifications,
-              ];
-            }
-          });
-
-          // Artık gelmeyen (kabul/red edilmiş) istek bildirimlerini temizle
-          const activeRequestIds = new Set(requests.map((r) => `n_req_${r.id}`));
-          notifications = notifications.filter((n) => {
-            if (n.type !== 'friend_request') return true;
-            return activeRequestIds.has(n.id);
-          });
-
-          // Aktif arkadaş hâlâ listede yoksa ilk arkadaşa geç
+          // Aktif arkadaş silinmişse / değişmişse koru ya da ilkine geç
           let activeFriendId = prev.activeFriendId;
           if (activeFriendId && !accepted.some((f) => f.id === activeFriendId)) {
             activeFriendId = accepted.length > 0 ? accepted[0].id : null;
@@ -242,7 +311,6 @@ export const AppProvider = ({ children }) => {
             friends: accepted,
             friendRequests: requests,
             achievements,
-            notifications,
             activeFriendId,
           };
         });
@@ -255,7 +323,7 @@ export const AppProvider = ({ children }) => {
     return () => unsubscribe();
   }, [state.user?.uid]);
 
-  // ---- Cheques real-time dinleyicisi (ADIM 3 YENİ) ----
+  // ---- Cheques real-time dinleyicisi ----
   useEffect(() => {
     if (!state.user?.uid) return;
 
@@ -266,8 +334,6 @@ export const AppProvider = ({ children }) => {
       orderBy('createdAt', 'desc')
     );
 
-    let isFirstLoad = true;
-
     const unsubscribe = onSnapshot(
       q,
       (snap) => {
@@ -277,57 +343,11 @@ export const AppProvider = ({ children }) => {
             id: d.id,
             ...data,
             createdAtMillis: tsToMillis(data.createdAt),
-            usedAtMillis: data.usedAt ? tsToMillis(data.usedAt) : null,
+            usedAtMillis: tsToMillis(data.usedAt),
           };
         });
 
-        // Yeni gelen çekleri bildirim olarak düşür (ilk yüklemede atla)
         setState((prev) => {
-          let notifications = prev.notifications;
-
-          if (!isFirstLoad) {
-            snap.docChanges().forEach((change) => {
-              if (change.type === 'added') {
-                const data = change.doc.data();
-                const id = change.doc.id;
-                const notifId = `n_cheque_${id}`;
-                if (notifications.some((n) => n.id === notifId)) return;
-
-                // Sadece karşı tarafın yazdığı yeni çekler için bildirim
-                // (kendi yazdığımı zaten biliyorum, ama yine de "gönderildi" notu verelim)
-                const isIncoming = data.ownerId === uid && data.fromId !== uid;
-                const isOutgoingGift = data.ownerId !== uid && data.fromId === uid;
-
-                if (isIncoming) {
-                  notifications = [
-                    {
-                      id: notifId,
-                      title: 'Yeni çek kazandın',
-                      body: `"${data.title}" çekini kazandın!`,
-                      createdAt: Date.now(),
-                      read: false,
-                      type: 'keep',
-                    },
-                    ...notifications,
-                  ];
-                } else if (isOutgoingGift) {
-                  notifications = [
-                    {
-                      id: notifId,
-                      title: 'Hediye gönderildi',
-                      body: `"${data.title}" çekini hediye ettin.`,
-                      createdAt: Date.now(),
-                      read: false,
-                      type: 'gift',
-                    },
-                    ...notifications,
-                  ];
-                }
-              }
-            });
-          }
-
-          // Başarıları otomatik güncelle
           const totalCheques = cheques.length;
           const myGifts = cheques.filter((c) => c.fromId === uid && c.ownerId !== uid).length;
           const achievements = prev.achievements.map((a) => {
@@ -341,11 +361,8 @@ export const AppProvider = ({ children }) => {
             ...prev,
             cheques,
             achievements,
-            notifications,
           };
         });
-
-        isFirstLoad = false;
       },
       (error) => {
         console.error('Cheques listener error:', error);
@@ -354,13 +371,6 @@ export const AppProvider = ({ children }) => {
 
     return () => unsubscribe();
   }, [state.user?.uid]);
-
-  // ---- Persist (user, friends, friendRequests, cheques HARİÇ) ----
-  useEffect(() => {
-    if (!hydrated) return;
-    const { user, friends, friendRequests, cheques, ...rest } = state;
-    AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(rest)).catch(() => {});
-  }, [state, hydrated]);
 
   // ---- Auth actions -------------------------------------------------
 
@@ -372,45 +382,52 @@ export const AppProvider = ({ children }) => {
     const available = await checkUsernameAvailable(cleanUsername);
     if (!available) throw new Error('Bu kullanıcı adı zaten alınmış');
 
-    const credential = await createUserWithEmailAndPassword(
-      auth,
-      email.trim().toLowerCase(),
-      password
-    );
-    const createdUser = credential.user;
-
-    await createdUser.getIdToken(true);
+    signupInProgressRef.current = true;
 
     try {
-      await sendEmailVerification(createdUser);
-    } catch (verifyErr) {
-      console.warn('Verification email failed (continuing):', verifyErr);
-    }
+      const credential = await createUserWithEmailAndPassword(
+        auth,
+        email.trim().toLowerCase(),
+        password
+      );
+      const createdUser = credential.user;
 
-    try {
-      await writeUserAndUsername({
-        uid: createdUser.uid,
-        username: cleanUsername,
-        email: email.trim().toLowerCase(),
-        avatar: randomAvatar(),
-      });
-    } catch (err) {
-      console.error('Firestore write failed, deleting auth user:', err);
+      await createdUser.getIdToken(true);
+      await new Promise((res) => setTimeout(res, 600));
+
       try {
-        await deleteUser(createdUser);
-      } catch (cleanupErr) {
-        console.warn('Auth cleanup also failed:', cleanupErr);
+        await sendEmailVerification(createdUser);
+      } catch (verifyErr) {
+        console.warn('Verification email failed (continuing):', verifyErr);
       }
-      throw err;
-    }
 
-    try {
-      await fbSignOut(auth);
-    } catch (e) {
-      console.warn('Post-signup sign out failed:', e);
-    }
+      try {
+        await writeUserAndUsername({
+          uid: createdUser.uid,
+          username: cleanUsername,
+          email: email.trim().toLowerCase(),
+          avatar: randomAvatar(),
+        });
+      } catch (err) {
+        console.error('Firestore write failed, deleting auth user:', err);
+        try {
+          await deleteUser(createdUser);
+        } catch (cleanupErr) {
+          console.warn('Auth cleanup also failed:', cleanupErr);
+        }
+        throw err;
+      }
 
-    return createdUser;
+      try {
+        await fbSignOut(auth);
+      } catch (e) {
+        console.warn('Post-signup sign out failed:', e);
+      }
+
+      return createdUser;
+    } finally {
+      signupInProgressRef.current = false;
+    }
   }, []);
 
   const signIn = useCallback(async ({ email, password }) => {
@@ -424,7 +441,13 @@ export const AppProvider = ({ children }) => {
     } catch (e) {
       console.warn('Sign out failed', e);
     }
-    setState(seedState());
+    setState((prev) => ({
+      ...seedState(),
+      isOnboarded: prev.isOnboarded,
+      readMap: prev.readMap,
+      passEvents: prev.passEvents,
+      freePassUsed: prev.freePassUsed,
+    }));
   }, []);
 
   const resetPassword = useCallback(async (email) => {
@@ -464,9 +487,14 @@ export const AppProvider = ({ children }) => {
     }
   }, []);
 
-  // ---- Cheque actions (ADIM 3 YENİ - async) -------------------------
+  // ---- Local actions -----------------------------------------------
 
-  const setOnboarded = useCallback(() => {
+  const setOnboarded = useCallback(async () => {
+    try {
+      await AsyncStorage.setItem(ONBOARDED_KEY, 'true');
+    } catch (e) {
+      console.warn('Save onboarded failed', e);
+    }
     setState((prev) => ({ ...prev, isOnboarded: true }));
   }, []);
 
@@ -475,8 +503,8 @@ export const AppProvider = ({ children }) => {
   }, []);
 
   /**
-   * Swipe sonrası çağrılır. Pas Firestore'a YAZILMAZ, sadece local state değişir.
-   * Keep/Gift Firestore'a yazılır.
+   * Pas / Keep / Gift çözüm.
+   * Keep ve Gift Firestore'a yazılır; Pas yalnızca local pas event'i kaydeder.
    */
   const resolveCheque = useCallback(
     async (template, direction, note = '') => {
@@ -488,30 +516,33 @@ export const AppProvider = ({ children }) => {
         throw new Error('Aktif kullanıcı veya arkadaş bulunamadı');
       }
 
-      // --- PAS ---
       if (direction === 'pass') {
+        const eventId = 'p_' + Date.now();
+        const event = {
+          id: eventId,
+          title: template.title,
+          friendUsername: activeFriend.username,
+          ts: Date.now(),
+        };
+
+        // Bu pas tüketilen ücretsiz pas mı?
+        // freePassUsed zaten true ise bu reklamla kazanılmış paslardır.
+        // Burada freePassUsed'i true yap ve son reset zamanını işaretle.
+        try {
+          await AsyncStorage.setItem(LAST_PASS_RESET_KEY, String(Date.now()));
+        } catch (e) {}
+
         setState((prev) => ({
           ...prev,
           freePassUsed: true,
+          passEvents: [event, ...(prev.passEvents || [])].slice(0, PASS_EVENTS_MAX),
           achievements: prev.achievements.map((a) =>
             a.id === 'first_pass' ? { ...a, unlocked: true } : a
           ),
-          notifications: [
-            {
-              id: 'n_' + Date.now(),
-              title: 'Pas geçildi',
-              body: `"${template.title}" çeki pas geçildi.`,
-              createdAt: Date.now(),
-              read: false,
-              type: 'pass',
-            },
-            ...prev.notifications,
-          ],
         }));
         return;
       }
 
-      // --- KEEP / GIFT → Firestore ---
       const otherUid = activeFriend.otherUid;
       const ownerId = direction === 'keep' ? currentUser.uid : otherUid;
       const fromId = direction === 'keep' ? otherUid : currentUser.uid;
@@ -527,7 +558,6 @@ export const AppProvider = ({ children }) => {
         reason: note || '',
         participants: [currentUser.uid, otherUid],
       });
-      // Listener otomatik güncelleyecek (notification + achievements dahil)
     },
     [state.user, state.activeFriendId, state.friends]
   );
@@ -550,25 +580,142 @@ export const AppProvider = ({ children }) => {
     }
   }, []);
 
-  const markAllNotificationsRead = useCallback(() => {
-    setState((prev) => ({
-      ...prev,
-      notifications: prev.notifications.map((n) => ({ ...n, read: true })),
-    }));
+  // Tek bir bildirimi okundu olarak işaretle (kalıcı)
+  const markNotificationRead = useCallback((notifId) => {
+    setState((prev) => {
+      if (prev.readMap?.[notifId]) return prev;
+      return { ...prev, readMap: { ...(prev.readMap || {}), [notifId]: true } };
+    });
   }, []);
 
   const grantExtraPass = useCallback(() => {
     setState((prev) => ({ ...prev, freePassUsed: false }));
   }, []);
 
-  const setAvatar = useCallback((avatarKey) => {
+  const setAvatar = useCallback(async (avatarKey) => {
     setState((prev) => ({
       ...prev,
       user: prev.user ? { ...prev.user, avatar: avatarKey } : prev.user,
     }));
-  }, []);
+    if (state.user?.uid) {
+      try {
+        await updateUserAvatar(state.user.uid, avatarKey);
+      } catch (e) {
+        console.warn('Avatar Firestore update failed:', e);
+      }
+    }
+  }, [state.user?.uid]);
 
-  // ---- Computed ----------------------------------------------------
+  // ---- Computed: notifications (TÜRETİLMİŞ) ------------------------
+
+  const derivedNotifications = useMemo(() => {
+    if (!state.user?.uid) return [];
+    const uid = state.user.uid;
+    const list = [];
+
+    // 1. Friend requests → bildirim
+    state.friendRequests.forEach((req) => {
+      list.push({
+        id: `n_req_${req.id}`,
+        type: 'friend_request',
+        title: 'Arkadaşlık isteği',
+        body: `@${req.fromUsername} seninle eşleşmek istiyor`,
+        createdAtMillis: req.createdAtMillis || Date.now(),
+        payload: { friendshipId: req.id },
+      });
+    });
+
+    // 2. Cheques → bildirim (her çek için tek bir bildirim, taraflara göre metin değişir)
+    state.cheques.forEach((c) => {
+      const id = `n_cheque_${c.id}`;
+      const ts = c.createdAtMillis || Date.now();
+
+      // Hediye geldi (karşı taraf bana yolladı)
+      if (c.ownerId === uid && c.fromId !== uid) {
+        list.push({
+          id,
+          type: 'gift_received',
+          title: 'Yeni çek geldi 🎁',
+          body: `"${c.title}" çekini sana hediye etti`,
+          createdAtMillis: ts,
+          payload: { chequeId: c.id },
+        });
+      }
+      // Ben hediye gönderdim
+      else if (c.ownerId !== uid && c.fromId === uid) {
+        list.push({
+          id,
+          type: 'gift_sent',
+          title: 'Hediye gönderildi',
+          body: `"${c.title}" çekini hediye ettin`,
+          createdAtMillis: ts,
+          payload: { chequeId: c.id },
+        });
+      }
+      // Kendi kendime aldım
+      else if (c.ownerId === uid && c.fromId === uid) {
+        list.push({
+          id,
+          type: 'kept',
+          title: 'Yeni çek kazandın',
+          body: `"${c.title}" çekini kendine aldın`,
+          createdAtMillis: ts,
+          payload: { chequeId: c.id },
+        });
+      }
+      // Karşı taraf kendine aldı (bilgilendirme)
+      else if (c.ownerId !== uid && c.fromId !== uid) {
+        list.push({
+          id,
+          type: 'partner_kept',
+          title: 'Karşı taraf çek aldı',
+          body: `"${c.title}" çekini kendine aldı`,
+          createdAtMillis: ts,
+          payload: { chequeId: c.id },
+        });
+      }
+    });
+
+    // 3. Pas events (local)
+    (state.passEvents || []).forEach((p) => {
+      list.push({
+        id: `n_pass_${p.id}`,
+        type: 'pass',
+        title: 'Pas geçildi',
+        body: `"${p.title}" çeki pas geçildi`,
+        createdAtMillis: p.ts,
+        payload: {},
+      });
+    });
+
+    // En yeni en üstte
+    list.sort((a, b) => (b.createdAtMillis || 0) - (a.createdAtMillis || 0));
+
+    // Read state'i ekle
+    return list.map((n) => ({
+      ...n,
+      read: !!state.readMap?.[n.id],
+    }));
+  }, [
+    state.user?.uid,
+    state.friendRequests,
+    state.cheques,
+    state.passEvents,
+    state.readMap,
+  ]);
+
+  // markAllNotificationsRead'i derivedNotifications üzerinden override et
+  const markAllNotificationsReadFinal = useCallback(() => {
+    setState((prev) => {
+      const next = { ...(prev.readMap || {}) };
+      derivedNotifications.forEach((n) => {
+        if (!n.read) next[n.id] = true;
+      });
+      return { ...prev, readMap: next };
+    });
+  }, [derivedNotifications]);
+
+  // ---- Computed -----------------------------------------------------
 
   const activeFriend = useMemo(
     () => state.friends.find((f) => f.id === state.activeFriendId) || null,
@@ -583,16 +730,16 @@ export const AppProvider = ({ children }) => {
     const relevant = state.cheques.filter((c) => c.friendshipId === friendshipId);
     const mine = relevant
       .filter((c) => c.ownerId === myUid)
-      .sort((a, b) => b.createdAtMillis - a.createdAtMillis);
+      .sort((a, b) => (b.createdAtMillis || 0) - (a.createdAtMillis || 0));
     const theirs = relevant
       .filter((c) => c.ownerId !== myUid)
-      .sort((a, b) => b.createdAtMillis - a.createdAtMillis);
+      .sort((a, b) => (b.createdAtMillis || 0) - (a.createdAtMillis || 0));
     return { mine, theirs };
   }, [state.cheques, state.activeFriendId, state.user, activeFriend]);
 
   const unreadCount = useMemo(
-    () => state.notifications.filter((n) => !n.read).length,
-    [state.notifications]
+    () => derivedNotifications.filter((n) => !n.read).length,
+    [derivedNotifications]
   );
 
   const value = useMemo(
@@ -602,6 +749,7 @@ export const AppProvider = ({ children }) => {
       authReady,
       activeFriend,
       chequesForActiveFriend,
+      notifications: derivedNotifications,
       unreadCount,
       signUp,
       signIn,
@@ -615,7 +763,8 @@ export const AppProvider = ({ children }) => {
       resolveCheque,
       updateChequeNote,
       useChequeCard,
-      markAllNotificationsRead,
+      markNotificationRead,
+      markAllNotificationsRead: markAllNotificationsReadFinal,
       grantExtraPass,
       setAvatar,
     }),
@@ -625,6 +774,7 @@ export const AppProvider = ({ children }) => {
       authReady,
       activeFriend,
       chequesForActiveFriend,
+      derivedNotifications,
       unreadCount,
       signUp,
       signIn,
@@ -638,7 +788,8 @@ export const AppProvider = ({ children }) => {
       resolveCheque,
       updateChequeNote,
       useChequeCard,
-      markAllNotificationsRead,
+      markNotificationRead,
+      markAllNotificationsReadFinal,
       grantExtraPass,
       setAvatar,
     ]

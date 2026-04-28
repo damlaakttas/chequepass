@@ -1,44 +1,85 @@
 // src/screens/NotificationsScreen.js
-import React, { useEffect } from 'react';
+import React, { useCallback } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
-import { Bell, Gift, Download, SkipForward, UserPlus, Sparkles, CheckCheck } from 'lucide-react-native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import {
+  Bell,
+  Gift,
+  Send,
+  Download,
+  SkipForward,
+  UserPlus,
+  Sparkles,
+  CheckCheck,
+  Inbox,
+} from 'lucide-react-native';
 import ScreenHeader from '../components/ScreenHeader';
 import { COLORS, FONTS, RADIUS, SHADOW, SPACING } from '../theme/theme';
 import { useApp } from '../context/AppContext';
 import { formatRelative } from '../utils/helpers';
 
+// Bildirim tipi → ikon ve renk
 const ICON_MAP = {
-  gift: { Icon: Gift, bg: COLORS.primary },
-  keep: { Icon: Download, bg: COLORS.secondary },
+  gift_received: { Icon: Gift, bg: COLORS.primary },
+  gift_sent: { Icon: Send, bg: COLORS.primary + '80' },
+  kept: { Icon: Download, bg: COLORS.secondary },
+  partner_kept: { Icon: Inbox, bg: COLORS.border },
   pass: { Icon: SkipForward, bg: COLORS.border },
-  friend: { Icon: UserPlus, bg: COLORS.primary },
   friend_request: { Icon: UserPlus, bg: COLORS.secondary },
   system: { Icon: Sparkles, bg: COLORS.secondary },
 };
 
 const NotificationsScreen = () => {
-  const { notifications, markAllNotificationsRead, unreadCount } = useApp();
+  const {
+    notifications,
+    markNotificationRead,
+    markAllNotificationsRead,
+    unreadCount,
+  } = useApp();
   const navigation = useNavigation();
 
-  useEffect(() => {
-    if (unreadCount > 0) {
-      const timer = setTimeout(markAllNotificationsRead, 800);
+  // Ekrana her odaklanışta, okunmamışları kısa bir süre sonra topluca okundu işaretle
+  // (kullanıcının görmesine fırsat tanımak için 1.5 sn beklenir).
+  useFocusEffect(
+    useCallback(() => {
+      if (unreadCount === 0) return undefined;
+      const timer = setTimeout(() => {
+        markAllNotificationsRead();
+      }, 1500);
       return () => clearTimeout(timer);
-    }
-  }, [unreadCount, markAllNotificationsRead]);
+    }, [unreadCount, markAllNotificationsRead])
+  );
 
   const handleNotifPress = (item) => {
+    // Yönlendirmeden önce bu bildirim okundu sayılır
+    markNotificationRead(item.id);
     if (item.type === 'friend_request') {
       navigation.navigate('Friends', { initialTab: 'requests' });
+      return;
+    }
+    if (
+      item.type === 'gift_received' ||
+      item.type === 'gift_sent' ||
+      item.type === 'kept' ||
+      item.type === 'partner_kept'
+    ) {
+      navigation.navigate('Cheques');
+      return;
     }
   };
 
   const renderItem = ({ item }) => {
     const { Icon, bg } = ICON_MAP[item.type] || ICON_MAP.system;
-    const clickable = item.type === 'friend_request';
-    const content = (
+    const clickable = [
+      'friend_request',
+      'gift_received',
+      'gift_sent',
+      'kept',
+      'partner_kept',
+    ].includes(item.type);
+
+    const inner = (
       <>
         <View style={[styles.iconCircle, { backgroundColor: bg }]}>
           <Icon size={18} color={COLORS.text} />
@@ -48,7 +89,7 @@ const NotificationsScreen = () => {
           <Text style={styles.itemBody} numberOfLines={2}>
             {item.body}
           </Text>
-          <Text style={styles.itemTime}>{formatRelative(item.createdAt)}</Text>
+          <Text style={styles.itemTime}>{formatRelative(item.createdAtMillis)}</Text>
         </View>
         {!item.read && <View style={styles.dot} />}
       </>
@@ -61,11 +102,11 @@ const NotificationsScreen = () => {
           onPress={() => handleNotifPress(item)}
           activeOpacity={0.85}
         >
-          {content}
+          {inner}
         </TouchableOpacity>
       );
     }
-    return <View style={[styles.item, !item.read && styles.itemUnread]}>{content}</View>;
+    return <View style={[styles.item, !item.read && styles.itemUnread]}>{inner}</View>;
   };
 
   return (
@@ -84,7 +125,8 @@ const NotificationsScreen = () => {
       <View style={styles.titleWrap}>
         <Text style={styles.pageTitle}>Bildirimler</Text>
         <Text style={styles.pageSub}>
-          {notifications.length} bildirim{unreadCount > 0 ? ` · ${unreadCount} okunmamış` : ''}
+          {notifications.length} bildirim
+          {unreadCount > 0 ? ` · ${unreadCount} okunmamış` : ''}
         </Text>
       </View>
 

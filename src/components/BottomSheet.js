@@ -1,34 +1,63 @@
 // src/components/BottomSheet.js
 import React from 'react';
-import { View, Text, StyleSheet, Modal, Pressable, ScrollView, TouchableOpacity } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  Modal,
+  Pressable,
+  ScrollView,
+  TouchableOpacity,
+  KeyboardAvoidingView,
+  Platform,
+  Keyboard,
+} from 'react-native';
 import { X } from 'lucide-react-native';
 import { COLORS, FONTS, RADIUS, SPACING } from '../theme/theme';
 
 const BottomSheet = ({ visible, onClose, title, children, maxHeight = 520 }) => {
+  const handleClose = () => {
+    Keyboard.dismiss();
+    onClose && onClose();
+  };
+
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={styles.bg} onPress={onClose}>
-        <Pressable style={[styles.card, { maxHeight }]} onPress={() => {}}>
-          <View style={styles.handle} />
-          <View style={styles.header}>
-            <Text style={styles.title}>{title}</Text>
-            <TouchableOpacity onPress={onClose} style={styles.close} hitSlop={8}>
-              <X size={18} color={COLORS.text} />
-            </TouchableOpacity>
-          </View>
-          <ScrollView
-            contentContainerStyle={{ paddingBottom: SPACING.xl }}
-            showsVerticalScrollIndicator={false}
-          >
-            {children}
-          </ScrollView>
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      onRequestClose={handleClose}
+    >
+      <KeyboardAvoidingView
+        style={styles.flex}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={0}
+      >
+        <Pressable style={styles.bg} onPress={handleClose}>
+          <Pressable style={[styles.card, { maxHeight }]} onPress={() => Keyboard.dismiss()}>
+            <View style={styles.handle} />
+            <View style={styles.header}>
+              <Text style={styles.title}>{title}</Text>
+              <TouchableOpacity onPress={handleClose} style={styles.close} hitSlop={8}>
+                <X size={18} color={COLORS.text} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView
+              contentContainerStyle={{ paddingBottom: SPACING.xl }}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+            >
+              {children}
+            </ScrollView>
+          </Pressable>
         </Pressable>
-      </Pressable>
+      </KeyboardAvoidingView>
     </Modal>
   );
 };
 
 const styles = StyleSheet.create({
+  flex: { flex: 1 },
   bg: {
     flex: 1,
     backgroundColor: COLORS.overlay,
@@ -59,6 +88,7 @@ const styles = StyleSheet.create({
     fontFamily: FONTS.semiBold,
     fontSize: 18,
     color: COLORS.text,
+    flex: 1,
   },
   close: {
     width: 32,

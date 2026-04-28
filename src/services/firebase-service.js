@@ -6,9 +6,7 @@ import {
   deleteDoc,
   serverTimestamp,
   collection,
-  query,
-  where,
-  getDocs,
+  updateDoc,
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
 
@@ -99,6 +97,13 @@ export const getUserProfile = async (uid) => {
   return snap.exists() ? { uid, ...snap.data() } : null;
 };
 
+/**
+ * Kullanıcının avatar tercihini Firestore'a yaz (cihazlar arası senkron için).
+ */
+export const updateUserAvatar = async (uid, avatar) => {
+  await updateDoc(doc(db, 'users', uid), { avatar });
+};
+
 // ---- Friendship helpers -----------------------------------------------------
 
 const friendshipId = (uid1, uid2) => {
@@ -121,6 +126,7 @@ export const sendFriendRequest = async ({ sender, targetUsername, relation = 'fr
   }
 
   const fId = friendshipId(sender.uid, targetUser.uid);
+  // Var olan friendship var mı kontrol et (rules'ta resource==null bypass var)
   const existing = await getDoc(doc(db, 'friendships', fId));
   if (existing.exists()) {
     const data = existing.data();
@@ -160,20 +166,11 @@ export const sendFriendRequest = async ({ sender, targetUsername, relation = 'fr
 
   return { friendshipId: fId, targetUsername: targetUser.username };
 };
+
 // ---- Cheque helpers ---------------------------------------------------------
 
 /**
  * Yeni bir çek oluştur (swipe sonrası Firestore'a yaz).
- * @param {Object} params
- * @param {Object} params.template - {title, subtitle, color}
- * @param {string} params.friendshipId - aktif friendship id
- * @param {string} params.ownerId - çekin sahibi (keep: ben, gift: arkadaş)
- * @param {string} params.fromId - kim gönderdi
- * @param {string} params.toId - kime gitti (ownerId ile aynı)
- * @param {string} params.direction - 'keep' | 'gift'
- * @param {string} params.reason - opsiyonel not
- * @param {Array<string>} params.participants - [uid1, uid2]
- * @returns {Promise<string>} yeni cheque id
  */
 export const createCheque = async ({
   template,
@@ -204,7 +201,7 @@ export const createCheque = async ({
 };
 
 /**
- * Çekin notunu güncelle. Sadece owner yapabilir (kural tarafında da kontrollü).
+ * Çekin notunu güncelle. Sadece owner yapabilir.
  */
 export const updateChequeReason = async (chequeId, reason) => {
   await setDoc(
