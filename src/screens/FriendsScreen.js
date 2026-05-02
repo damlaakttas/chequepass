@@ -3,14 +3,19 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput, Alert, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRoute } from '@react-navigation/native';
-import { Search, UserPlus, Heart, Users, Trash2, Check, X, Clock, Inbox } from 'lucide-react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Search, UserPlus, Heart, Users, Trash2, Check, X, Clock, Inbox, Edit3 } from 'lucide-react-native';
 import ScreenHeader from '../components/ScreenHeader';
 import AnimalAvatar from '../components/AnimalAvatar';
 import BottomSheet from '../components/BottomSheet';
+import PaywallSheet from '../components/PaywallSheet';
 import { COLORS, FONTS, RADIUS, SHADOW, SPACING } from '../theme/theme';
 import { useApp } from '../context/AppContext';
+import { usePremium } from '../context/PremiumContext';
 import { formatDate, formatRelative } from '../utils/helpers';
 import { sendFriendRequest } from '../services/firebase-service';
+
+const PAYWALL_TEASED_KEY = '@chequepass_paywall_teased_v1';
 
 const TABS = [
   { key: 'friends', label: 'Arkadaşlarım', Icon: Users },
@@ -27,7 +32,9 @@ const FriendsScreen = () => {
     setActiveFriend,
     acceptFriendRequest,
     rejectFriendRequest,
+    updateFriendRelation,
   } = useApp();
+  const { hasRomantic } = usePremium();
 
   const route = useRoute();
   const [tab, setTab] = useState('friends');
@@ -37,12 +44,31 @@ const FriendsScreen = () => {
   const [newRelation, setNewRelation] = useState('friend');
   const [sending, setSending] = useState(false);
   const [processingId, setProcessingId] = useState(null);
+  const [paywallOpen, setPaywallOpen] = useState(false);
+  // İlişki türü değiştirme modal'ı
+  const [relationEditFriend, setRelationEditFriend] = useState(null);
 
   useEffect(() => {
     if (route.params?.initialTab === 'requests') {
       setTab('requests');
     }
   }, [route.params?.initialTab]);
+
+  /**
+   * "Sevgili" seçildiğinde, kullanıcı henüz premium yoksa
+   * VE bu paywall daha önce gösterilmediyse → tek kerelik tease göster.
+   */
+  const triggerPartnerPaywall = async () => {
+    if (hasRomantic) return; // zaten alınmış
+    try {
+      const teased = await AsyncStorage.getItem(PAYWALL_TEASED_KEY);
+      if (teased === 'true') return; // bir kere gösterildi
+      await AsyncStorage.setItem(PAYWALL_TEASED_KEY, 'true');
+      setPaywallOpen(true);
+    } catch (e) {
+      console.warn('Paywall tease check failed', e);
+    }
+  };
 
   const filtered = friends.filter((f) =>
     f.username.toLowerCase().includes(query.toLowerCase())
@@ -161,7 +187,7 @@ const FriendsScreen = () => {
             {item.acceptedAtMillis && ` · ${formatDate(item.acceptedAtMillis)}`}
           </Text>
         </View>
-        <View style={{ flexDirection: 'row', gap: 8 }}>
+        <View style={{ flexDirection: 'row', gap: 6 }}>
           <TouchableOpacity
             style={[styles.iconBtn, active && styles.iconBtnActive]}
             onPress={() => setActiveFriend(item.id)}
@@ -172,6 +198,13 @@ const FriendsScreen = () => {
             ) : (
               <Text style={styles.selectText}>Seç</Text>
             )}
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.iconBtnLight}
+            onPress={() => setRelationEditFriend(item)}
+            disabled={processing}
+          >
+            <Edit3 size={14} color={COLORS.textMuted} />
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.iconBtnDanger}
@@ -376,7 +409,14 @@ const FriendsScreen = () => {
               <TouchableOpacity
                 key={key}
                 style={[styles.relationPill, active && styles.relationPillActive]}
-                onPress={() => !sending && setNewRelation(key)}
+                onPress={() => {
+                  if (sending) return;
+                  setNewRelation(key);
+                  if (key === 'partner') {
+                    // Sevgili seçildi → paywall tease (tek seferlik)
+                    triggerPartnerPaywall();
+                  }
+                }}
                 disabled={sending}
               >
                 <Icon size={15} color={active ? COLORS.text : COLORS.textMuted} />
@@ -400,6 +440,60 @@ const FriendsScreen = () => {
           )}
         </TouchableOpacity>
       </BottomSheet>
+
+      {/* İlişki türünü düzenle modal'ı (çift taraflı) */}
+      <BottomSheet
+        visible={!!relationEditFriend}
+        onClose={() => setRelationEditFriend(null)}
+        title="İlişki türünü değiştir"
+        maxHeight={420}
+      >
+        {relationEditFriend && (
+          <>
+            <Text style={styles.sheetSub}>
+              @{relationEditFriend.username} ile ilişki türünü değiştir. Bu değişiklik iki taraf için de geçerli olur.
+            </Text>
+            <View style={styles.relationRow}>
+              {[
+                { key: 'partner', label: 'Sevgili', Icon: Heart },
+                { key: 'friend', label: 'Arkadaş', Icon: Users },
+              ].map(({ key, label, Icon }) => {
+                const active = relationEditFriend.relation === key;
+                return (
+                  <TouchableOpacity
+                    key={key}
+                    style={[styles.relationPill, active && styles.relationPillActive]}
+                    onPress={async () => {
+                      if (relationEditFriend.relation === key) {
+                        setRelationEditFriend(null);
+                        return;
+                      }
+                      try {
+                        await updateFriendRelation(relationEditFriend.id, key);
+                        setRelationEditFriend(null);
+                        if (key === 'partner') triggerPartnerPaywall();
+                      } catch (e) {
+                        Alert.alert('Hata', e.message);
+                      }
+                    }}
+                  >
+                    <Icon size={15} color={active ? COLORS.text : COLORS.textMuted} />
+                    <Text style={[styles.relationText, active && styles.relationTextActive]}>
+                      {label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </>
+        )}
+      </BottomSheet>
+
+      <PaywallSheet
+        visible={paywallOpen}
+        onClose={() => setPaywallOpen(false)}
+        onSuccess={() => {}}
+      />
     </SafeAreaView>
   );
 };
@@ -497,6 +591,14 @@ const styles = StyleSheet.create({
   },
   iconBtnActive: {
     backgroundColor: COLORS.primary,
+  },
+  iconBtnLight: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: COLORS.background,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   iconBtnDanger: {
     width: 34,

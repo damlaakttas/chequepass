@@ -13,18 +13,24 @@ import {
   Edit3,
   Lock,
   CheckCircle2,
+  Heart,
+  ChevronRight,
 } from 'lucide-react-native';
 import ScreenHeader from '../components/ScreenHeader';
 import AnimalAvatar from '../components/AnimalAvatar';
 import BottomSheet from '../components/BottomSheet';
+import PaywallSheet from '../components/PaywallSheet';
 import { COLORS, FONTS, RADIUS, SHADOW, SPACING } from '../theme/theme';
 import { useApp } from '../context/AppContext';
+import { usePremium } from '../context/PremiumContext';
 
 const AVATAR_OPTIONS = ['fox', 'panda', 'koala', 'bunny', 'cat', 'owl'];
 
 const ProfileScreen = () => {
   const { user, friends, cheques, achievements, signOut, setAvatar } = useApp();
+  const { hasRomantic } = usePremium();
   const [avatarOpen, setAvatarOpen] = useState(false);
+  const [paywallOpen, setPaywallOpen] = useState(false);
   const [savingAvatar, setSavingAvatar] = useState(false);
 
   // İstatistikler:
@@ -105,6 +111,31 @@ const ProfileScreen = () => {
             <Text style={styles.statLabel}>Arkadaş</Text>
           </View>
         </View>
+
+        {/* Premium banner: stats ile achievements arasında */}
+        {!hasRomantic ? (
+          <TouchableOpacity
+            style={styles.premiumBanner}
+            onPress={() => setPaywallOpen(true)}
+            activeOpacity={0.85}
+          >
+            <View style={styles.premiumIconCircle}>
+              <Heart size={20} color="#fff" fill="#fff" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.premiumTitle}>Romantik Kartları Keşfet</Text>
+              <Text style={styles.premiumSub}>İlişkinizin ateşini yükseltecek kartlar.</Text>
+            </View>
+            <ChevronRight size={20} color="#fff" />
+          </TouchableOpacity>
+        ) : (
+          <View style={styles.premiumBannerActive}>
+            <View style={styles.premiumIconCircleActive}>
+              <Heart size={18} color="#10b981" fill="#10b981" />
+            </View>
+            <Text style={styles.premiumActiveText}>Romantik Paket Aktif ✓</Text>
+          </View>
+        )}
 
         {/* Achievements */}
         <View style={styles.section}>
@@ -200,6 +231,12 @@ const ProfileScreen = () => {
           })}
         </View>
       </BottomSheet>
+
+      <PaywallSheet
+        visible={paywallOpen}
+        onClose={() => setPaywallOpen(false)}
+        onSuccess={() => {}}
+      />
     </SafeAreaView>
   );
 };
@@ -271,6 +308,59 @@ const styles = StyleSheet.create({
     color: COLORS.text,
     opacity: 0.7,
     marginTop: 2,
+  },
+  premiumBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginHorizontal: SPACING.lg,
+    marginTop: SPACING.lg,
+    padding: 14,
+    borderRadius: RADIUS.lg,
+    backgroundColor: '#dc2626',
+    ...SHADOW.medium,
+  },
+  premiumIconCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  premiumTitle: {
+    fontFamily: FONTS.bold,
+    fontSize: 15,
+    color: '#fff',
+  },
+  premiumSub: {
+    fontFamily: FONTS.regular,
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.85)',
+    marginTop: 2,
+  },
+  premiumBannerActive: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginHorizontal: SPACING.lg,
+    marginTop: SPACING.lg,
+    padding: 12,
+    borderRadius: RADIUS.lg,
+    backgroundColor: '#d1fae5',
+  },
+  premiumIconCircleActive: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(16,185,129,0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  premiumActiveText: {
+    fontFamily: FONTS.semiBold,
+    fontSize: 13,
+    color: '#065f46',
   },
   section: {
     paddingHorizontal: SPACING.lg,

@@ -13,6 +13,7 @@ import {
 } from '@expo-google-fonts/poppins';
 
 import { AppProvider } from './src/context/AppContext';
+import { PremiumProvider } from './src/context/PremiumContext';
 import RootNavigator from './src/navigation/RootNavigator';
 import { COLORS } from './src/theme/theme';
 
@@ -36,9 +37,11 @@ export default function App() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <StatusBar barStyle="dark-content" backgroundColor={COLORS.background} />
-        <AppProvider>
-          <RootNavigator />
-        </AppProvider>
+        <PremiumProvider>
+          <AppProvider>
+            <RootNavigator />
+          </AppProvider>
+        </PremiumProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

@@ -75,18 +75,15 @@ const seedState = () => ({
     { id: 'five_cheques', title: 'Koleksiyoncu', description: '5 çek topladın', unlocked: false },
     { id: 'first_friend', title: 'Sosyal Kelebek', description: 'İlk arkadaşını ekledin', unlocked: false },
   ],
-  chequeTemplates: [
-    { title: 'Akşam Yemeği', subtitle: 'Romantik bir akşam yemeği hakkı', color: '#add7c4' },
-    { title: 'Kahve Ismarlama', subtitle: 'Favori kafende bir kahve', color: '#ebf381' },
-    { title: 'Film Seçme Hakkı', subtitle: 'Bu akşam film sen seçiyorsun', color: '#fbcfe8' },
-    { title: 'Tatlı Ikramı', subtitle: 'Canının istediği tatlı senin', color: '#fde68a' },
-    { title: '1 Saat Masaj', subtitle: 'Sıfır itiraz hakkı', color: '#c7d2fe' },
-    { title: 'Bulaşık Muafiyeti', subtitle: 'Bugün bulaşık senin değil', color: '#bae6fd' },
-    { title: 'Müzik Seçimi', subtitle: 'Arabanın playlisti sende', color: '#fecaca' },
-    { title: 'Sürpriz Hediye', subtitle: 'Küçük bir sürpriz bekle', color: '#ddd6fe' },
-    { title: 'Kahvaltı Servisi', subtitle: 'Yatakta kahvaltı hakkı', color: '#bbf7d0' },
-    { title: 'Spa Günü', subtitle: 'Evde spa günü planla', color: '#fed7aa' },
-  ],
+  // Kart desteleri Firestore'dan gelir; boş başlar.
+  // decks.friend, decks.partner, decks.romantic
+  decks: { friend: [], partner: [], romantic: [] },
+  decksLoaded: false,
+  // Aktif arkadaş için kullanıcının seçtiği deste varyantı.
+  // Sevgili ilişkide: 'partner' veya 'romantic' (premium varsa)
+  // Arkadaş ilişkide: 'friend' veya 'romantic' (premium varsa)
+  // Default: ilişki türüne göre belirlenir.
+  selectedDeckVariant: null, // 'normal' | 'romantic'
 });
 
 // Firestore Timestamp → millis
@@ -373,7 +370,54 @@ export const AppProvider = ({ children }) => {
     return () => unsubscribe();
   }, [state.user?.uid]);
 
-  // ---- Auth actions -------------------------------------------------
+  // ---- Decks listener (Firestore'dan kart şablonları) ----
+  // 3 deste paralel çekilir: friend, partner, romantic.
+  useEffect(() => {
+    if (!state.user?.uid) return;
+
+    const deckIds = ['friend', 'partner', 'romantic'];
+    const unsubscribers = [];
+    const tempDecks = { friend: null, partner: null, romantic: null };
+
+    deckIds.forEach((deckId) => {
+      const q = query(
+        collection(db, 'decks', deckId, 'cards'),
+        orderBy('order', 'asc')
+      );
+      const unsub = onSnapshot(
+        q,
+        (snap) => {
+          tempDecks[deckId] = snap.docs
+            .map((d) => ({ id: d.id, ...d.data() }))
+            .filter((c) => c.active !== false);
+
+          // Hepsi yüklendiyse state'e yaz
+          if (Object.values(tempDecks).every((d) => d !== null)) {
+            setState((prev) => ({
+              ...prev,
+              decks: { ...tempDecks },
+              decksLoaded: true,
+            }));
+          }
+        },
+        (error) => {
+          console.error(`Decks listener error (${deckId}):`, error);
+          // Hata olsa bile yüklendi say (boş)
+          tempDecks[deckId] = [];
+          if (Object.values(tempDecks).every((d) => d !== null)) {
+            setState((prev) => ({
+              ...prev,
+              decks: { ...tempDecks },
+              decksLoaded: true,
+            }));
+          }
+        }
+      );
+      unsubscribers.push(unsub);
+    });
+
+    return () => unsubscribers.forEach((u) => u && u());
+  }, [state.user?.uid]);
 
   const signUp = useCallback(async ({ username, email, password }) => {
     const validation = validateUsername(username);
@@ -488,6 +532,28 @@ export const AppProvider = ({ children }) => {
     }
   }, []);
 
+  /**
+   * İlişki türünü değiştir (çift taraflı). Bir taraf değiştirirse
+   * her iki kullanıcı için aynı şekilde güncellenir.
+   * relation: 'partner' | 'friend'
+   */
+  const updateFriendRelation = useCallback(async (friendshipId, newRelation) => {
+    try {
+      const ref = doc(db, 'friendships', friendshipId);
+      const snap = await getDoc(ref);
+      if (!snap.exists()) throw new Error('İlişki bulunamadı');
+      const data = snap.data();
+      const updatedUsers = { ...(data.users || {}) };
+      Object.keys(updatedUsers).forEach((uid) => {
+        updatedUsers[uid] = { ...updatedUsers[uid], relation: newRelation };
+      });
+      await updateDoc(ref, { users: updatedUsers });
+    } catch (e) {
+      console.error('Update relation failed:', e);
+      throw new Error('İlişki türü güncellenemedi: ' + (e.message || 'bilinmeyen hata'));
+    }
+  }, []);
+
   // ---- Local actions -----------------------------------------------
 
   const setOnboarded = useCallback(async () => {
@@ -500,7 +566,13 @@ export const AppProvider = ({ children }) => {
   }, []);
 
   const setActiveFriend = useCallback((friendId) => {
-    setState((prev) => ({ ...prev, activeFriendId: friendId }));
+    setState((prev) => ({ ...prev, activeFriendId: friendId, selectedDeckVariant: null }));
+    // Arkadaş değişince seçim sıfırlanır - aktif deste yeniden hesaplanır
+  }, []);
+
+  const setSelectedDeckVariant = useCallback((variant) => {
+    // 'normal' veya 'romantic'
+    setState((prev) => ({ ...prev, selectedDeckVariant: variant }));
   }, []);
 
   /**
@@ -717,6 +789,36 @@ export const AppProvider = ({ children }) => {
     [state.friends, state.activeFriendId]
   );
 
+  /**
+   * Aktif arkadaş ve seçili deste varyantına göre kullanılacak kart array'i.
+   * - Sevgili ilişkide:
+   *   - Default: 'partner' destesi
+   *   - Premium varsa kullanıcı 'romantic' seçebilir
+   * - Arkadaş ilişkide:
+   *   - Default: 'friend' destesi
+   *   - Premium varsa kullanıcı 'romantic' seçebilir
+   *
+   * Bu hook çıktı, dışarıda { activeDeckCards, availableVariants, currentVariant } şeklinde döner.
+   * Premium state PremiumContext'ten ayrı geleceği için burada premium yok varsayımıyla
+   * kart döndürür; HomeScreen premium'a göre nihai filtreleme yapar.
+   */
+  const activeDeckInfo = useMemo(() => {
+    if (!activeFriend) return { cards: [], baseVariant: 'friend', currentVariant: 'normal' };
+
+    const isPartner = activeFriend.relation === 'partner';
+    const baseVariant = isPartner ? 'partner' : 'friend';
+    const currentVariant = state.selectedDeckVariant || 'normal';
+
+    let cards;
+    if (currentVariant === 'romantic') {
+      cards = state.decks.romantic || [];
+    } else {
+      cards = state.decks[baseVariant] || [];
+    }
+
+    return { cards, baseVariant, currentVariant };
+  }, [activeFriend, state.selectedDeckVariant, state.decks]);
+
   const chequesForActiveFriend = useMemo(() => {
     if (!state.activeFriendId || !activeFriend) return { mine: [], theirs: [] };
     const myUid = state.user?.uid;
@@ -743,6 +845,7 @@ export const AppProvider = ({ children }) => {
       hydrated,
       authReady,
       activeFriend,
+      activeDeckInfo,
       chequesForActiveFriend,
       notifications: derivedNotifications,
       unreadCount,
@@ -752,9 +855,11 @@ export const AppProvider = ({ children }) => {
       resetPassword,
       setOnboarded,
       setActiveFriend,
+      setSelectedDeckVariant,
       acceptFriendRequest,
       rejectFriendRequest,
       removeFriend,
+      updateFriendRelation,
       resolveCheque,
       updateChequeNote,
       useChequeCard,
@@ -769,6 +874,7 @@ export const AppProvider = ({ children }) => {
       hydrated,
       authReady,
       activeFriend,
+      activeDeckInfo,
       chequesForActiveFriend,
       derivedNotifications,
       unreadCount,
@@ -778,9 +884,11 @@ export const AppProvider = ({ children }) => {
       resetPassword,
       setOnboarded,
       setActiveFriend,
+      setSelectedDeckVariant,
       acceptFriendRequest,
       rejectFriendRequest,
       removeFriend,
+      updateFriendRelation,
       resolveCheque,
       updateChequeNote,
       useChequeCard,
