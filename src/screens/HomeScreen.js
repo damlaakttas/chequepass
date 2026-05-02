@@ -1,5 +1,12 @@
 // src/screens/HomeScreen.js
-import React, { useEffect, useState, useCallback } from 'react';
+//
+// Akış:
+// idle      → Kart "kapalı" (sırt görünüyor, rastgele renk) + yuvarlak "Çek Kopart" butonu
+// shuffling → Kartlar açık ve hızlıca değişir (yazılı, ama hangisi seçileceği belli değil)
+// ready     → Net açık kart; kullanıcı swipe edebilir
+// noting    → Keep/Gift sonrası not modalı (X/dış-tık → kart yerinde durur)
+
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -10,9 +17,17 @@ import {
   Keyboard,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Sparkles, PlayCircle, UserPlus } from 'lucide-react-native';
+import { Sparkles, PlayCircle, UserPlus, Layers } from 'lucide-react-native';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withTiming,
+  withSequence,
+  Easing,
+} from 'react-native-reanimated';
 import ScreenHeader from '../components/ScreenHeader';
-import ChequeCard from '../components/ChequeCard';
+import ChequeCard, { CARD_W, CARD_H } from '../components/ChequeCard';
+import DeckCard from '../components/DeckCard';
 import OnboardingOverlay from '../components/OnboardingOverlay';
 import BottomSheet from '../components/BottomSheet';
 import { COLORS, FONTS, RADIUS, SHADOW, SPACING } from '../theme/theme';
@@ -30,8 +45,14 @@ const HomeScreen = ({ navigation }) => {
     grantExtraPass,
   } = useApp();
 
+  const [phase, setPhase] = useState('idle');
   const [currentTemplate, setCurrentTemplate] = useState(null);
-  const [hasCard, setHasCard] = useState(false);
+  // Idle'da kapalı kartın rengi (uygulama açılışında rastgele seçilir, sabit kalır
+  // her shuffle bittiğinde yeniden rastgelelenir — böylece hep yeşil olmaz)
+  const [idleColor, setIdleColor] = useState(null);
+  // Shuffle sırasında üstte gösterilen geçici template (hızla değişir)
+  const [shufflePreview, setShufflePreview] = useState(null);
+
   const [passPromptOpen, setPassPromptOpen] = useState(false);
   const [pendingPassTemplate, setPendingPassTemplate] = useState(null);
   const [noteSheetOpen, setNoteSheetOpen] = useState(false);
@@ -39,23 +60,88 @@ const HomeScreen = ({ navigation }) => {
   const [noteText, setNoteText] = useState('');
   const [saving, setSaving] = useState(false);
 
-  const drawNewCard = useCallback(() => {
-    const t = pickRandom(chequeTemplates);
-    setCurrentTemplate(t);
-    setHasCard(true);
-  }, [chequeTemplates]);
+  const shuffleRotate = useSharedValue(0);
+  const shuffleY = useSharedValue(0);
+  const shuffleTimerRef = useRef(null);
+
+  // İlk açılışta ve her ready→idle döngüsünde rastgele renk seç
+  useEffect(() => {
+    if (!idleColor && chequeTemplates.length) {
+      setIdleColor(pickRandom(chequeTemplates).color);
+    }
+  }, [chequeTemplates, idleColor]);
+
+  const startShuffle = useCallback(() => {
+    if (phase !== 'idle' || !activeFriend) return;
+    setPhase('shuffling');
+
+    let i = 0;
+    const tickMs = 100;
+    const totalMs = 1500;
+    const ticks = Math.floor(totalMs / tickMs);
+    setShufflePreview(pickRandom(chequeTemplates));
+
+    shuffleTimerRef.current = setInterval(() => {
+      i++;
+      setShufflePreview(pickRandom(chequeTemplates));
+      if (i >= ticks) {
+        clearInterval(shuffleTimerRef.current);
+        shuffleTimerRef.current = null;
+        const finalT = pickRandom(chequeTemplates);
+        setCurrentTemplate(finalT);
+        setShufflePreview(null);
+        setPhase('ready');
+      }
+    }, tickMs);
+
+    shuffleRotate.value = withSequence(
+      withTiming(-6, { duration: 90, easing: Easing.linear }),
+      withTiming(6, { duration: 90, easing: Easing.linear }),
+      withTiming(-4, { duration: 90, easing: Easing.linear }),
+      withTiming(4, { duration: 90, easing: Easing.linear }),
+      withTiming(-3, { duration: 90, easing: Easing.linear }),
+      withTiming(3, { duration: 90, easing: Easing.linear }),
+      withTiming(0, { duration: 120, easing: Easing.out(Easing.quad) })
+    );
+    shuffleY.value = withSequence(
+      withTiming(-12, { duration: 180, easing: Easing.out(Easing.quad) }),
+      withTiming(0, { duration: 180, easing: Easing.in(Easing.quad) }),
+      withTiming(-8, { duration: 160 }),
+      withTiming(0, { duration: 160 })
+    );
+  }, [phase, activeFriend, chequeTemplates, shuffleRotate, shuffleY]);
+
+  useEffect(() => {
+    return () => {
+      if (shuffleTimerRef.current) clearInterval(shuffleTimerRef.current);
+    };
+  }, []);
+
+  const shuffleAnimStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateY: shuffleY.value },
+      { rotate: `${shuffleRotate.value}deg` },
+    ],
+  }));
+
+  const goToIdle = () => {
+    setCurrentTemplate(null);
+    // Yeni rastgele renk seç (hep yeşil olmasın)
+    setIdleColor(pickRandom(chequeTemplates).color);
+    setPhase('idle');
+  };
 
   const handleResolve = async (direction) => {
     if (!activeFriend) {
       Alert.alert('Arkadaş seç', 'Önce bir arkadaş eklemelisin veya seçmelisin.');
-      setHasCard(false);
+      goToIdle();
       return;
     }
 
     if (direction === 'pass' && freePassUsed) {
       setPendingPassTemplate(currentTemplate);
       setPassPromptOpen(true);
-      setHasCard(false);
+      goToIdle();
       return;
     }
 
@@ -65,21 +151,23 @@ const HomeScreen = ({ navigation }) => {
       } catch (e) {
         Alert.alert('Hata', e.message || 'Pas geçilemedi');
       }
-      setHasCard(false);
+      goToIdle();
       return;
     }
 
     setPendingResolve({ template: currentTemplate, direction });
     setNoteText('');
-    setHasCard(false);
     setNoteSheetOpen(true);
+    setPhase('noting');
   };
 
-  const closeNoteSheet = () => {
+  // X / dış tıklama / geri tuşu → kart YERİNDE durur
+  const closeNoteSheetWithoutAction = () => {
     Keyboard.dismiss();
     setNoteSheetOpen(false);
     setPendingResolve(null);
     setNoteText('');
+    setPhase('ready');
   };
 
   const finalizeResolve = async () => {
@@ -91,6 +179,7 @@ const HomeScreen = ({ navigation }) => {
       setPendingResolve(null);
       setNoteSheetOpen(false);
       setNoteText('');
+      goToIdle();
     } catch (e) {
       Alert.alert('Hata', e.message || 'Çek kaydedilemedi');
     } finally {
@@ -107,6 +196,7 @@ const HomeScreen = ({ navigation }) => {
       setPendingResolve(null);
       setNoteSheetOpen(false);
       setNoteText('');
+      goToIdle();
     } catch (e) {
       Alert.alert('Hata', e.message || 'Çek kaydedilemedi');
     } finally {
@@ -130,12 +220,6 @@ const HomeScreen = ({ navigation }) => {
     }, 600);
   };
 
-  useEffect(() => {
-    if (!hasCard && activeFriend) drawNewCard();
-  }, [hasCard, activeFriend, drawNewCard]);
-
-  // Bu kişi için anlamlı çekim akışı: gift = "ona hediye", keep = "kendine al"
-  // ChequeCard tarafından zaten uygun ikonlar gösteriliyor.
   const directionLabel = pendingResolve?.direction === 'gift'
     ? `@${activeFriend?.username || 'arkadaşına'} hediye edeceksin`
     : pendingResolve?.direction === 'keep'
@@ -171,17 +255,52 @@ const HomeScreen = ({ navigation }) => {
                   @{activeFriend.username} ile oynuyorsun
                 </Text>
               </View>
-              <Text style={styles.prompt}>Kartı kaydır ve çekini kopart</Text>
+              <Text style={styles.prompt}>
+                {phase === 'idle' && 'Şansını dene, çekini kopart'}
+                {phase === 'shuffling' && 'Kartlar karıştırılıyor...'}
+                {phase === 'ready' && 'Kartı kaydır'}
+                {phase === 'noting' && ' '}
+              </Text>
             </View>
 
             <View style={styles.cardArea}>
-              {hasCard && currentTemplate && (
+              {/* IDLE: kapalı kart (sırtı) + yuvarlak buton */}
+              {phase === 'idle' && idleColor && (
+                <View style={styles.deckWrap}>
+                  <DeckCard color={idleColor} />
+                  <TouchableOpacity
+                    style={styles.copartBtn}
+                    onPress={startShuffle}
+                    activeOpacity={0.85}
+                  >
+                    <View style={styles.copartBtnInner}>
+                      <Layers size={26} color="#fff" />
+                      <Text style={styles.copartBtnText}>KOPART</Text>
+                    </View>
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {/* SHUFFLING: açık kartlar hızlıca değişir, blur YOK */}
+              {phase === 'shuffling' && shufflePreview && (
+                <Animated.View style={shuffleAnimStyle}>
+                  <ChequeCardStatic template={shufflePreview} />
+                </Animated.View>
+              )}
+
+              {/* READY: net swipe edilebilir kart */}
+              {phase === 'ready' && currentTemplate && (
                 <ChequeCard
-                  key={currentTemplate.title + Date.now()}
+                  key={currentTemplate.title}
                   template={currentTemplate}
                   friendName={activeFriend.username}
                   onResolve={handleResolve}
                 />
+              )}
+
+              {/* NOTING: kart "çekildi", boş alan */}
+              {phase === 'noting' && (
+                <View style={{ width: CARD_W, height: CARD_H }} />
               )}
             </View>
 
@@ -207,13 +326,9 @@ const HomeScreen = ({ navigation }) => {
         <OnboardingOverlay onDismiss={setOnboarded} />
       )}
 
-      {/* Pas reklam modalı */}
       <BottomSheet
         visible={passPromptOpen}
-        onClose={() => {
-          setPassPromptOpen(false);
-          setHasCard(false);
-        }}
+        onClose={() => setPassPromptOpen(false)}
         title="Ücretsiz pas hakkın tükendi"
         maxHeight={380}
       >
@@ -227,10 +342,9 @@ const HomeScreen = ({ navigation }) => {
         </TouchableOpacity>
       </BottomSheet>
 
-      {/* Not bottom sheet */}
       <BottomSheet
         visible={noteSheetOpen}
-        onClose={closeNoteSheet}
+        onClose={closeNoteSheetWithoutAction}
         title={directionLabel || 'Not eklemek ister misin?'}
         maxHeight={520}
       >
@@ -269,6 +383,88 @@ const HomeScreen = ({ navigation }) => {
   );
 };
 
+// Shuffle sırasında gösterilen swipe edilemeyen ama görünüşü ChequeCard ile aynı olan
+// statik kart. (Reanimated parent içinde yer alabilsin diye sade bir View.)
+const ChequeCardStatic = ({ template }) => (
+  <View style={[staticStyles.card, { backgroundColor: template.color }]}>
+    <View style={staticStyles.topRow}>
+      <View style={staticStyles.chipLight}>
+        <Text style={staticStyles.chipLightText}>HEDİYE ÇEKİ</Text>
+      </View>
+    </View>
+    <View style={staticStyles.center}>
+      <Text style={staticStyles.title}>{template.title}</Text>
+      <Text style={staticStyles.subtitle}>{template.subtitle}</Text>
+    </View>
+    <View style={staticStyles.bottom}>
+      <View>
+        <Text style={staticStyles.label}>ÇEKEN</Text>
+        <Text style={staticStyles.value}>Sen</Text>
+      </View>
+      <View style={{ alignItems: 'flex-end' }}>
+        <Text style={staticStyles.label}>GEÇERLİLİK</Text>
+        <Text style={staticStyles.value}>Süresiz</Text>
+      </View>
+    </View>
+  </View>
+);
+
+const staticStyles = StyleSheet.create({
+  card: {
+    width: CARD_W,
+    height: CARD_H,
+    borderRadius: RADIUS.xl,
+    padding: SPACING.lg,
+    justifyContent: 'space-between',
+    ...SHADOW.strong,
+  },
+  topRow: { flexDirection: 'row', justifyContent: 'flex-start' },
+  chipLight: {
+    backgroundColor: 'rgba(255,255,255,0.55)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: RADIUS.pill,
+  },
+  chipLightText: {
+    fontFamily: FONTS.bold,
+    fontSize: 10,
+    letterSpacing: 1.4,
+    color: COLORS.text,
+  },
+  center: { alignItems: 'center', paddingHorizontal: 8 },
+  title: {
+    fontFamily: FONTS.bold,
+    fontSize: 34,
+    color: COLORS.text,
+    textAlign: 'center',
+    letterSpacing: -0.8,
+    lineHeight: 40,
+  },
+  subtitle: {
+    fontFamily: FONTS.medium,
+    fontSize: 14,
+    color: COLORS.text,
+    opacity: 0.75,
+    textAlign: 'center',
+    marginTop: 10,
+    lineHeight: 20,
+  },
+  bottom: { flexDirection: 'row', justifyContent: 'space-between' },
+  label: {
+    fontFamily: FONTS.bold,
+    fontSize: 9,
+    letterSpacing: 1.3,
+    color: COLORS.text,
+    opacity: 0.55,
+  },
+  value: {
+    fontFamily: FONTS.semiBold,
+    fontSize: 13,
+    color: COLORS.text,
+    marginTop: 2,
+  },
+});
+
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.background },
   container: { flex: 1, paddingHorizontal: SPACING.lg },
@@ -294,11 +490,40 @@ const styles = StyleSheet.create({
     color: COLORS.text,
     marginTop: 14,
     textAlign: 'center',
+    minHeight: 22,
   },
   cardArea: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  deckWrap: {
+    width: CARD_W,
+    height: CARD_H,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  // Yuvarlak Kopart butonu
+  copartBtn: {
+    position: 'absolute',
+    width: 110,
+    height: 110,
+    borderRadius: 55,
+    backgroundColor: COLORS.text,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...SHADOW.strong,
+  },
+  copartBtnInner: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+  },
+  copartBtnText: {
+    fontFamily: FONTS.bold,
+    fontSize: 13,
+    color: '#fff',
+    letterSpacing: 1.2,
   },
   hintRow: {
     flexDirection: 'row',

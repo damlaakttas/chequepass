@@ -1,56 +1,65 @@
 // src/components/AppLogo.js
+//
+// İki kullanım:
+// - <AppLogo variant="header" />  → tüm ekranlarda sol üst (logo.png yatay)
+// - <AppLogo variant="hero" />    → giriş ekranı orta amblem (amblem.png kare)
+//
+// Asset dosyaları (assets/ klasörü altında):
+//   logo.png      (yatay marka logosu — yazı + sembol)
+//   amblem.png    (kare amblem — mağaza ikonu için de kullanılır)
+//
+// Çalışma mantığı:
+// - Header için: 200×46 boyutunda bir kutu çizilir; logo.png "contain" ile
+//   bu kutuya sığar. Logo dosyası ne aspect oranda olursa olsun bozulmadan görünür.
+// - Hero için: 180×180 kare; amblem ortalanır, "contain" ile sığar.
+
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
-import Svg, { Circle, Path } from 'react-native-svg';
-import { COLORS, FONTS } from '../theme/theme';
+import { View, Image, StyleSheet } from 'react-native';
 
-const AppLogo = ({ size = 'md' }) => {
-  const config = {
-    sm: { icon: 22, font: 16 },
-    md: { icon: 28, font: 19 },
-    lg: { icon: 56, font: 32 },
-  }[size] || { icon: 28, font: 19 };
+const HEADER_W = 200;
+const HEADER_H = 46;
 
-  return (
-    <View style={styles.container}>
-      <View style={[styles.iconWrap, { width: config.icon + 8, height: config.icon + 8 }]}>
-        <Svg width={config.icon} height={config.icon} viewBox="0 0 40 40">
-          <Circle cx="20" cy="20" r="18" fill={COLORS.primary} />
-          <Path
-            d="M12 14 L28 14 L28 26 L12 26 Z"
-            fill={COLORS.surface}
-            stroke={COLORS.text}
-            strokeWidth="0.6"
-          />
-          <Path d="M15 18 L25 18 M15 22 L22 22" stroke={COLORS.text} strokeWidth="1.2" strokeLinecap="round" />
-          <Circle cx="27" cy="26" r="5" fill={COLORS.secondary} stroke={COLORS.text} strokeWidth="0.6" />
-          <Path d="M25 26 L26.5 27.5 L29.5 24.5" stroke={COLORS.text} strokeWidth="1.3" strokeLinecap="round" fill="none" />
-        </Svg>
+const HERO_SIZE = 180;
+
+const AppLogo = ({ variant = 'header', size }) => {
+  if (variant === 'hero') {
+    const dim = size || HERO_SIZE;
+    return (
+      <View style={[styles.heroBox, { width: dim, height: dim }]}>
+        <Image
+          source={require('../../assets/amblem.png')}
+          style={styles.imageFill}
+          resizeMode="contain"
+        />
       </View>
-      <Text style={[styles.brand, { fontSize: config.font }]}>
-        Cheque<Text style={styles.brandAccent}>Pass</Text>
-      </Text>
+    );
+  }
+
+  // header (default)
+  return (
+    <View style={[styles.headerBox, { width: HEADER_W, height: HEADER_H }]}>
+      <Image
+        source={require('../../assets/logo.png')}
+        style={styles.imageFill}
+        resizeMode="contain"
+      />
     </View>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  iconWrap: {
+  heroBox: {
+    alignSelf: 'center',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  brand: {
-    fontFamily: FONTS.bold,
-    color: COLORS.text,
-    letterSpacing: -0.5,
+  headerBox: {
+    alignItems: 'flex-start',
+    justifyContent: 'center',
   },
-  brandAccent: {
-    color: COLORS.primaryDark,
+  imageFill: {
+    width: '100%',
+    height: '100%',
   },
 });
 

@@ -200,7 +200,7 @@ const AuthScreen = () => {
   };
 
   const titleMap = {
-    [MODE.LOGIN]: 'Tekrar hoş geldin',
+    [MODE.LOGIN]: 'Hoş geldin',
     [MODE.SIGNUP]: 'Hesap oluştur',
     [MODE.FORGOT]: 'Şifreni sıfırla',
   };
@@ -247,16 +247,14 @@ const AuthScreen = () => {
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-          <View style={styles.header}>
-            <AppLogo size="md" />
-          </View>
-
           <View style={styles.hero}>
-            <AppLogo size="lg" />
+            <AppLogo variant="hero" />
           </View>
 
-          <Text style={styles.title}>{titleMap[mode]}</Text>
-          <Text style={styles.subtitle}>{subMap[mode]}</Text>
+          <View style={styles.titleBlock}>
+            <Text style={styles.title}>{titleMap[mode]}</Text>
+            <Text style={styles.subtitle}>{subMap[mode]}</Text>
+          </View>
 
           <View style={styles.form}>
             {mode === MODE.SIGNUP && (
@@ -445,21 +443,35 @@ const PRIVACY_TEXT = `Gizliliğine saygı duyuyoruz.
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.background },
-  scroll: { paddingHorizontal: SPACING.lg, paddingBottom: SPACING.xl },
+  scroll: {
+    paddingHorizontal: SPACING.lg,
+    paddingBottom: SPACING.xl,
+    flexGrow: 1,
+  },
   header: { paddingTop: SPACING.sm, paddingBottom: SPACING.lg },
-  hero: { alignItems: 'center', paddingVertical: SPACING.lg },
+  hero: {
+    width: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingTop: SPACING.xl * 2,
+    paddingBottom: SPACING.lg,
+  },
+  titleBlock: {
+    alignItems: 'flex-start',
+    width: '100%',
+    marginTop: SPACING.sm,
+    marginBottom: SPACING.lg,
+  },
   title: {
     fontFamily: FONTS.bold,
     fontSize: 26,
     color: COLORS.text,
-    marginTop: SPACING.md,
   },
   subtitle: {
     fontFamily: FONTS.regular,
     fontSize: 14,
     color: COLORS.textMuted,
     marginTop: 4,
-    marginBottom: SPACING.lg,
   },
   form: { gap: 12 },
   inputWrap: {

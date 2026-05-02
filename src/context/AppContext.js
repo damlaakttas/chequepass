@@ -41,6 +41,7 @@ import {
   updateChequeReason,
   markChequeUsed,
   updateUserAvatar,
+  deleteCheque,
 } from '../services/firebase-service';
 
 const AppContext = createContext(null);
@@ -580,6 +581,19 @@ export const AppProvider = ({ children }) => {
     }
   }, []);
 
+  /**
+   * Kullanılmış çeki sil. Sadece çekin sahibi (status='used' olanı) silebilir.
+   * Firestore rules tarafında da kontrol var.
+   */
+  const deleteChequeCard = useCallback(async (chequeId) => {
+    try {
+      await deleteCheque(chequeId);
+    } catch (e) {
+      console.error('Delete cheque failed:', e);
+      throw new Error('Çek silinemedi: ' + (e.message || 'bilinmeyen hata'));
+    }
+  }, []);
+
   // Tek bir bildirimi okundu olarak işaretle (kalıcı)
   const markNotificationRead = useCallback((notifId) => {
     setState((prev) => {
@@ -607,13 +621,20 @@ export const AppProvider = ({ children }) => {
   }, [state.user?.uid]);
 
   // ---- Computed: notifications (TÜRETİLMİŞ) ------------------------
+  //
+  // BILDIRIM POLITIKASI:
+  // - Kendi yaptığım hareketler için BILDIRIM YOK (kendine aldım, hediye gönderdim, pas geçtim).
+  // - Sadece KARŞI TARAFIN benimle ilgili eylemleri:
+  //   * Arkadaşlık isteği gönderdi (friend_request)
+  //   * Bana hediye yolladı (gift_received)
+  //   * Sahibi olduğu (benden ona gelen veya kendi aldığı) çeki KULLANDI (cheque_used_by_friend)
 
   const derivedNotifications = useMemo(() => {
     if (!state.user?.uid) return [];
     const uid = state.user.uid;
     const list = [];
 
-    // 1. Friend requests → bildirim
+    // 1. Friend requests
     state.friendRequests.forEach((req) => {
       list.push({
         id: `n_req_${req.id}`,
@@ -625,15 +646,17 @@ export const AppProvider = ({ children }) => {
       });
     });
 
-    // 2. Cheques → bildirim (her çek için tek bir bildirim, taraflara göre metin değişir)
+    // 2. Cheques
     state.cheques.forEach((c) => {
-      const id = `n_cheque_${c.id}`;
       const ts = c.createdAtMillis || Date.now();
 
-      // Hediye geldi (karşı taraf bana yolladı)
-      if (c.ownerId === uid && c.fromId !== uid) {
+      // (a) Karşı taraf bana hediye yolladı → bildirim
+      // ÖNEMLI: direction='gift' VE ben sahibiyim → bana hediye gelmiş demektir.
+      // (Kendine alma 'keep' direction'ında kalır, fromId teknik olarak otherUid olsa
+      //  da bildirim oluşturmamak için direction filtresi şart.)
+      if (c.direction === 'gift' && c.ownerId === uid && c.fromId !== uid) {
         list.push({
-          id,
+          id: `n_cheque_${c.id}`,
           type: 'gift_received',
           title: 'Yeni çek geldi 🎁',
           body: `"${c.title}" çekini sana hediye etti`,
@@ -641,57 +664,30 @@ export const AppProvider = ({ children }) => {
           payload: { chequeId: c.id },
         });
       }
-      // Ben hediye gönderdim
-      else if (c.ownerId !== uid && c.fromId === uid) {
+
+      // (b) Karşı taraf, kendi sahibi olduğu çeki KULLANDI → bana haber
+      if (c.ownerId !== uid && c.status === 'used' && c.usedAtMillis) {
         list.push({
-          id,
-          type: 'gift_sent',
-          title: 'Hediye gönderildi',
-          body: `"${c.title}" çekini hediye ettin`,
-          createdAtMillis: ts,
+          id: `n_cheque_used_${c.id}`,
+          type: 'cheque_used_by_friend',
+          title: 'Çek kullanıldı ✓',
+          body: `"${c.title}" çekini karşı taraf kullandı`,
+          createdAtMillis: c.usedAtMillis,
           payload: { chequeId: c.id },
         });
       }
-      // Kendi kendime aldım
-      else if (c.ownerId === uid && c.fromId === uid) {
-        list.push({
-          id,
-          type: 'kept',
-          title: 'Yeni çek kazandın',
-          body: `"${c.title}" çekini kendine aldın`,
-          createdAtMillis: ts,
-          payload: { chequeId: c.id },
-        });
-      }
-      // Karşı taraf kendine aldı (bilgilendirme)
-      else if (c.ownerId !== uid && c.fromId !== uid) {
-        list.push({
-          id,
-          type: 'partner_kept',
-          title: 'Karşı taraf çek aldı',
-          body: `"${c.title}" çekini kendine aldı`,
-          createdAtMillis: ts,
-          payload: { chequeId: c.id },
-        });
-      }
+
+      // (c) Kendi yaptığım hareketler için bildirim YOK:
+      //     - Kendine aldım (direction='keep', ownerId === uid)
+      //     - Hediye gönderdim (direction='gift', ownerId !== uid, fromId === uid)
+      //     - Pas geçtim
     });
 
-    // 3. Pas events (local)
-    (state.passEvents || []).forEach((p) => {
-      list.push({
-        id: `n_pass_${p.id}`,
-        type: 'pass',
-        title: 'Pas geçildi',
-        body: `"${p.title}" çeki pas geçildi`,
-        createdAtMillis: p.ts,
-        payload: {},
-      });
-    });
+    // 3. Pas events: artık bildirim üretmiyor (kullanıcı kendi pasını biliyor).
 
     // En yeni en üstte
     list.sort((a, b) => (b.createdAtMillis || 0) - (a.createdAtMillis || 0));
 
-    // Read state'i ekle
     return list.map((n) => ({
       ...n,
       read: !!state.readMap?.[n.id],
@@ -700,7 +696,6 @@ export const AppProvider = ({ children }) => {
     state.user?.uid,
     state.friendRequests,
     state.cheques,
-    state.passEvents,
     state.readMap,
   ]);
 
@@ -763,6 +758,7 @@ export const AppProvider = ({ children }) => {
       resolveCheque,
       updateChequeNote,
       useChequeCard,
+      deleteChequeCard,
       markNotificationRead,
       markAllNotificationsRead: markAllNotificationsReadFinal,
       grantExtraPass,
@@ -788,6 +784,7 @@ export const AppProvider = ({ children }) => {
       resolveCheque,
       updateChequeNote,
       useChequeCard,
+      deleteChequeCard,
       markNotificationRead,
       markAllNotificationsReadFinal,
       grantExtraPass,

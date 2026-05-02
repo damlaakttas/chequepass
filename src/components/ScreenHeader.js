@@ -7,13 +7,16 @@ import AnimalAvatar from './AnimalAvatar';
 import { COLORS, FONTS, RADIUS, SHADOW, SPACING } from '../theme/theme';
 import { useApp } from '../context/AppContext';
 
-const ScreenHeader = ({ title, showFriendSwitcher = true, rightAction = null }) => {
+const ScreenHeader = ({ showFriendSwitcher = true, rightAction = null }) => {
   const { friends, activeFriend, setActiveFriend } = useApp();
   const [pickerOpen, setPickerOpen] = useState(false);
 
   return (
     <View style={styles.wrap}>
-      <AppLogo size="md" />
+      <View style={styles.left}>
+        <AppLogo variant="header" />
+      </View>
+
       <View style={styles.right}>
         {showFriendSwitcher && friends.length > 0 && (
           <TouchableOpacity
@@ -23,18 +26,18 @@ const ScreenHeader = ({ title, showFriendSwitcher = true, rightAction = null }) 
           >
             {activeFriend ? (
               <>
-                <AnimalAvatar type={activeFriend.avatar} size={26} />
+                <AnimalAvatar type={activeFriend.avatar} size={22} />
                 <Text style={styles.switcherText} numberOfLines={1}>
                   @{activeFriend.username}
                 </Text>
               </>
             ) : (
               <>
-                <Users size={18} color={COLORS.text} />
+                <Users size={16} color={COLORS.text} />
                 <Text style={styles.switcherText}>Seç</Text>
               </>
             )}
-            <ChevronDown size={16} color={COLORS.textMuted} />
+            <ChevronDown size={14} color={COLORS.textMuted} />
           </TouchableOpacity>
         )}
         {rightAction}
@@ -85,27 +88,40 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: SPACING.lg,
+    paddingHorizontal: SPACING.md,
     paddingTop: SPACING.sm,
-    paddingBottom: SPACING.md,
+    paddingBottom: SPACING.sm,
+    gap: 8,
+    minHeight: 60,
   },
-  right: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  left: {
+    flexShrink: 0,
+  },
+  right: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexShrink: 1,
+    minWidth: 0, // taşmayı önlesin
+  },
   switcher: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 6,
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: RADIUS.pill,
     backgroundColor: COLORS.surface,
-    maxWidth: 160,
+    maxWidth: 130,
+    flexShrink: 1,
     ...SHADOW.soft,
   },
   switcherText: {
     fontFamily: FONTS.medium,
-    fontSize: 13,
+    fontSize: 12,
     color: COLORS.text,
-    maxWidth: 70,
+    maxWidth: 60,
+    flexShrink: 1,
   },
   modalBg: {
     flex: 1,

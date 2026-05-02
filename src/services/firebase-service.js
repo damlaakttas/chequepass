@@ -221,3 +221,11 @@ export const markChequeUsed = async (chequeId) => {
     { merge: true }
   );
 };
+
+/**
+ * Çeki sil. Sadece kullanılmış (status='used') çekler için anlamlı.
+ * Firestore rules tarafında 'sahibi & status==used' kontrolü var.
+ */
+export const deleteCheque = async (chequeId) => {
+  await deleteDoc(doc(db, 'cheques', chequeId));
+};

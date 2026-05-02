@@ -1,33 +1,70 @@
 // src/screens/ChequesScreen.js
-import React, { useState } from 'react';
+//
+// Değişiklikler:
+// - Sekmeler: "Benim" / "Onun"
+// - Sekme altında filtre chip'leri: Kullanılabilir / Kullanılmış / Tümü
+// - Kullanılmış kartlar opacity 0.55
+// - Sola swipe → "Sil" butonu çıkar; tıklayınca onay diyaloğu sonra siler
+// - Detayda not ve "Çeki Kullandım" sadece kullanılmamış kart için
+
+import React, { useState, useMemo, useRef } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput, Alert, Keyboard } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Inbox, Gift, CheckCircle2, FileText, X, Edit3 } from 'lucide-react-native';
+import { Inbox, Gift, CheckCircle2, FileText, X, Edit3, Trash2 } from 'lucide-react-native';
+import { Swipeable } from 'react-native-gesture-handler';
 import ScreenHeader from '../components/ScreenHeader';
 import BottomSheet from '../components/BottomSheet';
 import { COLORS, FONTS, RADIUS, SHADOW, SPACING } from '../theme/theme';
 import { useApp } from '../context/AppContext';
 import { formatDate, formatRelative } from '../utils/helpers';
 
-// Sekmeler:
-// mine    = bana ait olan çekler (sahibi benim, ister kendi aldığım ister karşı taraf hediye etmiş)
-// theirs  = karşı tarafa ait olan çekler (sahibi o, ister ben hediye ettim ister kendi aldı)
+// Üst sekmeler:
+// mine    = sahibi benim olan çekler
+// theirs  = sahibi karşı taraf olan çekler
 const TABS = [
-  { key: 'mine', label: 'Bana Ait', icon: Inbox },
+  { key: 'mine', label: 'Benim', icon: Inbox },
   { key: 'theirs', label: 'Onun', icon: Gift },
 ];
 
+// Alt filtre chip'leri:
+// active = kullanılabilir (status !== 'used')
+// used   = kullanılmış (status === 'used')
+// all    = tümü
+const FILTERS = [
+  { key: 'active', label: 'Kullanılabilir' },
+  { key: 'used', label: 'Kullanılmış' },
+  { key: 'all', label: 'Tümü' },
+];
+
 const ChequesScreen = () => {
-  const { chequesForActiveFriend, activeFriend, updateChequeNote, useChequeCard, user } = useApp();
+  const {
+    chequesForActiveFriend,
+    activeFriend,
+    updateChequeNote,
+    useChequeCard,
+    deleteChequeCard,
+    user,
+  } = useApp();
+
   const [tab, setTab] = useState('mine');
+  const [filter, setFilter] = useState('active');
   const [selected, setSelected] = useState(null);
   const [noteDraft, setNoteDraft] = useState('');
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  const list = tab === 'mine' ? chequesForActiveFriend.mine : chequesForActiveFriend.theirs;
+  // Aktif Swipeable referansı (aynı anda birden fazla açılmasın)
+  const openRowRef = useRef(null);
 
-  // Kullanılmamış sayıları (badge için)
+  const baseList = tab === 'mine' ? chequesForActiveFriend.mine : chequesForActiveFriend.theirs;
+
+  const list = useMemo(() => {
+    if (filter === 'active') return baseList.filter((c) => c.status !== 'used');
+    if (filter === 'used') return baseList.filter((c) => c.status === 'used');
+    return baseList;
+  }, [baseList, filter]);
+
+  // Üst sekmenin badge sayıları (kullanılmamışlar)
   const myActive = chequesForActiveFriend.mine.filter((c) => c.status !== 'used').length;
   const theirActive = chequesForActiveFriend.theirs.filter((c) => c.status !== 'used').length;
 
@@ -76,34 +113,75 @@ const ChequesScreen = () => {
     ]);
   };
 
-  /**
-   * Çekin nereden geldiğini açıklayan etiket.
-   * - direction === 'gift'  → karşı taraf hediye etti (ben aldıysam) ya da ben hediye ettim
-   * - direction === 'keep' → kim çektiyse kendine aldı
-   */
+  const handleDelete = (item, swipeRef) => {
+    Alert.alert(
+      'Çek silinsin mi?',
+      'Kullanılmış olan bu çek listeden tamamen kaldırılacak.',
+      [
+        {
+          text: 'Vazgeç',
+          style: 'cancel',
+          onPress: () => {
+            try { swipeRef?.current?.close(); } catch (e) {}
+          },
+        },
+        {
+          text: 'Sil',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteChequeCard(item.id);
+              if (selected?.id === item.id) setSelected(null);
+            } catch (e) {
+              Alert.alert('Hata', e.message || 'Silinemedi');
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const getOriginLabel = (item) => {
     const myUid = user?.uid;
     const friendName = activeFriend?.username || 'arkadaş';
 
     if (item.direction === 'gift') {
-      // hediye akışı
       if (item.ownerId === myUid) {
         return `@${friendName} hediye etti`;
       }
       return `Sen @${friendName}'e hediye ettin`;
     }
-    // keep: kim aldıysa kendine almış
+    // keep
     if (item.ownerId === myUid) {
       return 'Kendine aldın';
     }
     return `@${friendName} kendine aldı`;
   };
 
-  const renderItem = ({ item }) => {
-    const originLabel = getOriginLabel(item);
+  const renderRightActions = (item, swipeRef) => () => {
+    // Sadece kullanılmış çek silinebilir + sadece sahibi (mine sekmesi)
+    if (item.status !== 'used' || tab !== 'mine') return null;
     return (
+      <View style={styles.deleteWrap}>
+        <TouchableOpacity
+          style={styles.deleteAction}
+          onPress={() => handleDelete(item, swipeRef)}
+          activeOpacity={0.8}
+        >
+          <Trash2 size={20} color="#fff" />
+          <Text style={styles.deleteActionText}>Sil</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  };
+
+  // Her satır için ayrı bir wrapper component (her satır kendi ref'ine sahip olsun)
+  const SwipeableChequeRow = ({ item }) => {
+    const swipeRef = useRef(null);
+
+    const card = (
       <TouchableOpacity
-        style={styles.row}
+        style={[styles.row, item.status === 'used' && styles.rowUsed]}
         onPress={() => openDetail(item)}
         activeOpacity={0.85}
       >
@@ -124,12 +202,36 @@ const ChequesScreen = () => {
           <View style={styles.rowMeta}>
             <Text style={styles.metaText}>{formatRelative(item.createdAtMillis)}</Text>
             <Text style={styles.metaDot}>•</Text>
-            <Text style={styles.metaText}>{originLabel}</Text>
+            <Text style={styles.metaText}>{getOriginLabel(item)}</Text>
           </View>
         </View>
       </TouchableOpacity>
     );
+
+    const canDelete = item.status === 'used' && tab === 'mine';
+    if (!canDelete) return card;
+
+    return (
+      <Swipeable
+        ref={swipeRef}
+        renderRightActions={renderRightActions(item, swipeRef)}
+        onSwipeableWillOpen={() => {
+          // Diğer açık satırları kapat
+          if (openRowRef.current && openRowRef.current !== swipeRef.current) {
+            try { openRowRef.current.close(); } catch (e) {}
+          }
+          openRowRef.current = swipeRef.current;
+        }}
+        friction={1.5}
+        rightThreshold={40}
+        overshootRight={false}
+      >
+        {card}
+      </Swipeable>
+    );
   };
+
+  const renderItem = ({ item }) => <SwipeableChequeRow item={item} />;
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -142,6 +244,7 @@ const ChequesScreen = () => {
         </Text>
       </View>
 
+      {/* Üst sekme: Benim / Onun */}
       <View style={styles.tabs}>
         {TABS.map((t) => {
           const Icon = t.icon;
@@ -158,11 +261,26 @@ const ChequesScreen = () => {
               <Text style={[styles.tabText, active && styles.tabTextActive]}>{t.label}</Text>
               {count > 0 && (
                 <View style={[styles.countBadge, active && styles.countBadgeActive]}>
-                  <Text style={[styles.countText, active && styles.countTextActive]}>
-                    {count}
-                  </Text>
+                  <Text style={[styles.countText, active && styles.countTextActive]}>{count}</Text>
                 </View>
               )}
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
+      {/* Alt filtre chipleri */}
+      <View style={styles.filterRow}>
+        {FILTERS.map((f) => {
+          const active = filter === f.key;
+          return (
+            <TouchableOpacity
+              key={f.key}
+              style={[styles.filterChip, active && styles.filterChipActive]}
+              onPress={() => setFilter(f.key)}
+              activeOpacity={0.85}
+            >
+              <Text style={[styles.filterText, active && styles.filterTextActive]}>{f.label}</Text>
             </TouchableOpacity>
           );
         })}
@@ -172,14 +290,14 @@ const ChequesScreen = () => {
         <View style={styles.empty}>
           <FileText size={44} color={COLORS.textLight} />
           <Text style={styles.emptyTitle}>Henüz arkadaş yok</Text>
-          <Text style={styles.emptySub}>
-            Çekleri görmek için bir arkadaş eklemen lazım.
-          </Text>
+          <Text style={styles.emptySub}>Çekleri görmek için bir arkadaş eklemen lazım.</Text>
         </View>
       ) : list.length === 0 ? (
         <View style={styles.empty}>
           <FileText size={44} color={COLORS.textLight} />
-          <Text style={styles.emptyTitle}>Henüz çek yok</Text>
+          <Text style={styles.emptyTitle}>
+            {filter === 'used' ? 'Kullanılmış çek yok' : filter === 'active' ? 'Kullanılabilir çek yok' : 'Henüz çek yok'}
+          </Text>
           <Text style={styles.emptySub}>
             {tab === 'mine'
               ? 'Sana ait çekler burada görünecek.'
@@ -250,7 +368,7 @@ const ChequesScreen = () => {
                 <Text style={styles.noteText}>
                   {selected.reason
                     ? selected.reason
-                    : tab === 'mine'
+                    : tab === 'mine' && selected.status !== 'used'
                       ? 'Henüz bir not eklenmedi. Düzenlemek için "Not ekle"ye dokun.'
                       : 'Bu çek için not eklenmemiş.'}
                 </Text>
@@ -284,7 +402,6 @@ const ChequesScreen = () => {
                 </>
               ) : (
                 <>
-                  {/* Sadece sahibi (yani mine sekmesi) not düzenleyebilir */}
                   {tab === 'mine' && selected.status !== 'used' && (
                     <TouchableOpacity style={styles.ghostBtn} onPress={() => setEditing(true)}>
                       <Edit3 size={16} color={COLORS.text} />
@@ -323,7 +440,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.surface,
     borderRadius: RADIUS.pill,
     padding: 4,
-    marginBottom: SPACING.md,
+    marginBottom: SPACING.sm,
     ...SHADOW.soft,
   },
   tab: {
@@ -347,23 +464,39 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  countBadgeActive: {
+  countBadgeActive: { backgroundColor: COLORS.text },
+  countText: { fontFamily: FONTS.bold, fontSize: 10, color: COLORS.textMuted },
+  countTextActive: { color: '#fff' },
+  filterRow: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingHorizontal: SPACING.lg,
+    marginBottom: SPACING.md,
+  },
+  filterChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: RADIUS.pill,
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: 'transparent',
+    ...SHADOW.soft,
+  },
+  filterChipActive: {
     backgroundColor: COLORS.text,
+    borderColor: COLORS.text,
   },
-  countText: {
-    fontFamily: FONTS.bold,
-    fontSize: 10,
-    color: COLORS.textMuted,
-  },
-  countTextActive: {
-    color: '#fff',
-  },
+  filterText: { fontFamily: FONTS.medium, fontSize: 12, color: COLORS.textMuted },
+  filterTextActive: { color: '#fff', fontFamily: FONTS.semiBold },
   row: {
     flexDirection: 'row',
     backgroundColor: COLORS.surface,
     borderRadius: RADIUS.md,
     overflow: 'hidden',
     ...SHADOW.soft,
+  },
+  rowUsed: {
+    opacity: 0.55,
   },
   colorStrip: { width: 5 },
   rowTop: {
@@ -418,6 +551,26 @@ const styles = StyleSheet.create({
     color: COLORS.textMuted,
     textAlign: 'center',
     marginTop: 4,
+  },
+  deleteWrap: {
+    width: 90,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  deleteAction: {
+    backgroundColor: COLORS.danger,
+    width: 80,
+    height: '88%',
+    justifyContent: 'center',
+    alignItems: 'center',
+    flexDirection: 'column',
+    gap: 4,
+    borderRadius: RADIUS.md,
+  },
+  deleteActionText: {
+    color: '#fff',
+    fontFamily: FONTS.semiBold,
+    fontSize: 12,
   },
   detailHeader: {
     flexDirection: 'row',

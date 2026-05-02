@@ -6,26 +6,19 @@ import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import {
   Bell,
   Gift,
-  Send,
-  Download,
-  SkipForward,
+  CheckCircle2,
   UserPlus,
   Sparkles,
   CheckCheck,
-  Inbox,
 } from 'lucide-react-native';
 import ScreenHeader from '../components/ScreenHeader';
 import { COLORS, FONTS, RADIUS, SHADOW, SPACING } from '../theme/theme';
 import { useApp } from '../context/AppContext';
 import { formatRelative } from '../utils/helpers';
 
-// Bildirim tipi → ikon ve renk
 const ICON_MAP = {
   gift_received: { Icon: Gift, bg: COLORS.primary },
-  gift_sent: { Icon: Send, bg: COLORS.primary + '80' },
-  kept: { Icon: Download, bg: COLORS.secondary },
-  partner_kept: { Icon: Inbox, bg: COLORS.border },
-  pass: { Icon: SkipForward, bg: COLORS.border },
+  cheque_used_by_friend: { Icon: CheckCircle2, bg: COLORS.secondary },
   friend_request: { Icon: UserPlus, bg: COLORS.secondary },
   system: { Icon: Sparkles, bg: COLORS.secondary },
 };
@@ -39,8 +32,7 @@ const NotificationsScreen = () => {
   } = useApp();
   const navigation = useNavigation();
 
-  // Ekrana her odaklanışta, okunmamışları kısa bir süre sonra topluca okundu işaretle
-  // (kullanıcının görmesine fırsat tanımak için 1.5 sn beklenir).
+  // Ekrana odaklanılınca 1.5 sn sonra topluca okundu işaretle
   useFocusEffect(
     useCallback(() => {
       if (unreadCount === 0) return undefined;
@@ -52,18 +44,12 @@ const NotificationsScreen = () => {
   );
 
   const handleNotifPress = (item) => {
-    // Yönlendirmeden önce bu bildirim okundu sayılır
     markNotificationRead(item.id);
     if (item.type === 'friend_request') {
       navigation.navigate('Friends', { initialTab: 'requests' });
       return;
     }
-    if (
-      item.type === 'gift_received' ||
-      item.type === 'gift_sent' ||
-      item.type === 'kept' ||
-      item.type === 'partner_kept'
-    ) {
+    if (item.type === 'gift_received' || item.type === 'cheque_used_by_friend') {
       navigation.navigate('Cheques');
       return;
     }
@@ -71,13 +57,10 @@ const NotificationsScreen = () => {
 
   const renderItem = ({ item }) => {
     const { Icon, bg } = ICON_MAP[item.type] || ICON_MAP.system;
-    const clickable = [
-      'friend_request',
-      'gift_received',
-      'gift_sent',
-      'kept',
-      'partner_kept',
-    ].includes(item.type);
+    const clickable =
+      item.type === 'friend_request' ||
+      item.type === 'gift_received' ||
+      item.type === 'cheque_used_by_friend';
 
     const inner = (
       <>
@@ -86,9 +69,7 @@ const NotificationsScreen = () => {
         </View>
         <View style={{ flex: 1 }}>
           <Text style={styles.itemTitle}>{item.title}</Text>
-          <Text style={styles.itemBody} numberOfLines={2}>
-            {item.body}
-          </Text>
+          <Text style={styles.itemBody} numberOfLines={2}>{item.body}</Text>
           <Text style={styles.itemTime}>{formatRelative(item.createdAtMillis)}</Text>
         </View>
         {!item.read && <View style={styles.dot} />}
@@ -114,9 +95,12 @@ const NotificationsScreen = () => {
       <ScreenHeader
         rightAction={
           unreadCount > 0 ? (
-            <TouchableOpacity style={styles.markBtn} onPress={markAllNotificationsRead}>
-              <CheckCheck size={14} color={COLORS.text} />
-              <Text style={styles.markText}>Tümünü oku</Text>
+            <TouchableOpacity
+              style={styles.markBtn}
+              onPress={markAllNotificationsRead}
+              hitSlop={6}
+            >
+              <CheckCheck size={16} color={COLORS.text} />
             </TouchableOpacity>
           ) : null
         }
@@ -156,16 +140,14 @@ const styles = StyleSheet.create({
   pageTitle: { fontFamily: FONTS.bold, fontSize: 28, color: COLORS.text, letterSpacing: -0.5 },
   pageSub: { fontFamily: FONTS.regular, fontSize: 13, color: COLORS.textMuted, marginTop: 2 },
   markBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     backgroundColor: COLORS.surface,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: RADIUS.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
     ...SHADOW.soft,
   },
-  markText: { fontFamily: FONTS.medium, fontSize: 12, color: COLORS.text },
   item: {
     flexDirection: 'row',
     alignItems: 'flex-start',

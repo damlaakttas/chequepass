@@ -1,4 +1,11 @@
 // src/components/ChequeCard.js
+//
+// Kart iki modda kullanılabilir:
+// - blurred (interaktif değil): blur efekti + buton üstte gözükür
+// - normal: kullanıcı swipe edebilir
+//
+// Seri numarası ve "ChequePass" filigranı KALDIRILDI.
+
 import React from 'react';
 import { View, Text, StyleSheet, Dimensions } from 'react-native';
 import Animated, {
@@ -15,8 +22,8 @@ import { Gift, Download, SkipForward } from 'lucide-react-native';
 import { COLORS, FONTS, RADIUS, SHADOW, SPACING } from '../theme/theme';
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
-const CARD_W = Math.min(SCREEN_W - 48, 340);
-const CARD_H = Math.min(SCREEN_H * 0.55, 480);
+export const CARD_W = Math.min(SCREEN_W - 48, 340);
+export const CARD_H = Math.min(SCREEN_H * 0.55, 480);
 
 const SWIPE_THRESHOLD = 110;
 
@@ -26,7 +33,6 @@ const ChequeCard = ({ template, onResolve, friendName }) => {
 
   const resolve = (direction) => {
     onResolve(direction);
-    // Kart sonrası reset
     translateX.value = withTiming(0, { duration: 250 });
     translateY.value = withTiming(0, { duration: 250 });
   };
@@ -43,13 +49,11 @@ const ChequeCard = ({ template, onResolve, friendName }) => {
 
       if (absY > absX && absY > SWIPE_THRESHOLD) {
         if (translationY < 0) {
-          // Yukarı → hediye et
           translateY.value = withTiming(-SCREEN_H, { duration: 260 }, () => {
             runOnJS(resolve)('gift');
           });
           return;
         } else {
-          // Aşağı → kendine al
           translateY.value = withTiming(SCREEN_H, { duration: 260 }, () => {
             runOnJS(resolve)('keep');
           });
@@ -57,13 +61,11 @@ const ChequeCard = ({ template, onResolve, friendName }) => {
         }
       }
       if (translationX < -SWIPE_THRESHOLD) {
-        // Sola → pas
         translateX.value = withTiming(-SCREEN_W, { duration: 260 }, () => {
           runOnJS(resolve)('pass');
         });
         return;
       }
-      // Geri dön
       translateX.value = withSpring(0, { damping: 16 });
       translateY.value = withSpring(0, { damping: 16 });
     });
@@ -93,33 +95,26 @@ const ChequeCard = ({ template, onResolve, friendName }) => {
   const giftBadgeStyle = useAnimatedStyle(() => ({
     opacity: interpolate(translateY.value, [-140, -30, 0], [1, 0.2, 0], Extrapolation.CLAMP),
     transform: [
-      {
-        scale: interpolate(translateY.value, [-140, 0], [1, 0.7], Extrapolation.CLAMP),
-      },
+      { scale: interpolate(translateY.value, [-140, 0], [1, 0.7], Extrapolation.CLAMP) },
     ],
   }));
 
   const keepBadgeStyle = useAnimatedStyle(() => ({
     opacity: interpolate(translateY.value, [0, 30, 140], [0, 0.2, 1], Extrapolation.CLAMP),
     transform: [
-      {
-        scale: interpolate(translateY.value, [0, 140], [0.7, 1], Extrapolation.CLAMP),
-      },
+      { scale: interpolate(translateY.value, [0, 140], [0.7, 1], Extrapolation.CLAMP) },
     ],
   }));
 
   const passBadgeStyle = useAnimatedStyle(() => ({
     opacity: interpolate(translateX.value, [-140, -30, 0], [1, 0.2, 0], Extrapolation.CLAMP),
     transform: [
-      {
-        scale: interpolate(translateX.value, [-140, 0], [1, 0.7], Extrapolation.CLAMP),
-      },
+      { scale: interpolate(translateX.value, [-140, 0], [1, 0.7], Extrapolation.CLAMP) },
     ],
   }));
 
   return (
     <View style={styles.container}>
-      {/* Direction badges */}
       <Animated.View style={[styles.badgeWrap, { top: 20 }, giftBadgeStyle]}>
         <View style={[styles.badge, { backgroundColor: COLORS.primary }]}>
           <Gift size={18} color={COLORS.text} />
@@ -149,11 +144,6 @@ const ChequeCard = ({ template, onResolve, friendName }) => {
             <View style={styles.chipLight}>
               <Text style={styles.chipLightText}>HEDİYE ÇEKİ</Text>
             </View>
-            <View style={styles.serial}>
-              <Text style={styles.serialText}>
-                №{(template.title?.length || 4) * 137}
-              </Text>
-            </View>
           </View>
 
           <View style={styles.cardCenter}>
@@ -170,10 +160,6 @@ const ChequeCard = ({ template, onResolve, friendName }) => {
               <Text style={styles.cardLabel}>GEÇERLİLİK</Text>
               <Text style={styles.cardValue}>Süresiz</Text>
             </View>
-          </View>
-
-          <View style={styles.waterMark}>
-            <Text style={styles.waterMarkText}>ChequePass</Text>
           </View>
         </Animated.View>
       </GestureDetector>
@@ -198,7 +184,7 @@ const styles = StyleSheet.create({
   },
   cardTopRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-start',
     alignItems: 'center',
   },
   chipLight: {
@@ -211,17 +197,6 @@ const styles = StyleSheet.create({
     fontFamily: FONTS.bold,
     fontSize: 10,
     letterSpacing: 1.4,
-    color: COLORS.text,
-  },
-  serial: {
-    backgroundColor: 'rgba(255,255,255,0.35)',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 6,
-  },
-  serialText: {
-    fontFamily: FONTS.medium,
-    fontSize: 11,
     color: COLORS.text,
   },
   cardCenter: { alignItems: 'center', paddingHorizontal: 8 },
@@ -258,18 +233,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: COLORS.text,
     marginTop: 2,
-  },
-  waterMark: {
-    position: 'absolute',
-    right: 18,
-    bottom: 60,
-    opacity: 0.1,
-    transform: [{ rotate: '-20deg' }],
-  },
-  waterMarkText: {
-    fontFamily: FONTS.bold,
-    fontSize: 48,
-    color: COLORS.text,
   },
   badgeWrap: {
     position: 'absolute',

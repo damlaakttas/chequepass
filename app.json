@@ -4,10 +4,10 @@
     "slug": "chequepass",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/amblem.png",
     "userInterfaceStyle": "light",
     "splash": {
-      "image": "./assets/splash.png",
+      "image": "./assets/amblem.png",
       "resizeMode": "contain",
       "backgroundColor": "#f0e9e9"
     },
@@ -18,7 +18,7 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
+        "foregroundImage": "./assets/amblem.png",
         "backgroundColor": "#f0e9e9"
       },
       "package": "com.chequepass.app"
