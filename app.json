@@ -11,10 +11,13 @@
       "resizeMode": "contain",
       "backgroundColor": "#f0e9e9"
     },
-    "assetBundlePatterns": ["**/*"],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.chequepass.app"
+      "bundleIdentifier": "com.damlaaktas.chequepass",
+      "buildNumber": "1"
     },
     "android": {
       "adaptiveIcon": {
@@ -33,6 +36,12 @@
           "fonts": []
         }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "81fc144f-f955-471b-9b71-42208a22f9c1"
+      }
+    },
+    "owner": "damlaaktassss"
   }
 }

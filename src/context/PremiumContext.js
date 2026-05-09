@@ -18,7 +18,7 @@ const PremiumContext = createContext(null);
 const PREMIUM_KEY = '@chequepass_premium_v1';
 
 // Production'a geçince bu true olacak
-const USE_REVENUECAT = false;
+const USE_REVENUECAT = true;
 
 // RevenueCat ürün ID'si (App Store Connect & RevenueCat'te aynı olmalı)
 export const ROMANTIC_PRODUCT_ID = 'chequepass.romantic.lifetime';
@@ -43,7 +43,7 @@ export const PremiumProvider = ({ children }) => {
         if (USE_REVENUECAT && Purchases) {
           // RevenueCat init - API key Apple App Store için
           await Purchases.configure({
-            apiKey: 'REPLACE_WITH_REVENUECAT_PUBLIC_API_KEY',
+            apiKey: 'appl_YYwcRYYMcCSrBdahMNMYavEOwqA',
           });
           const customerInfo = await Purchases.getCustomerInfo();
           const isActive = !!customerInfo.entitlements.active[ROMANTIC_ENTITLEMENT];
