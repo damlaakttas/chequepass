@@ -3,23 +3,24 @@ import { initializeAuth, getReactNativePersistence } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// .env dosyasındaki şifreleri alıyoruz
+// Firebase config - public değerler, doğrudan kod içinde tutuluyor.
+// Güvenlik Firebase Authentication + Firestore Rules ile sağlanıyor.
 const firebaseConfig = {
-  apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
-  authDomain: process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN,
-  projectId: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID,
-  storageBucket: process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-  appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID,
+  apiKey: 'AIzaSyAWPRDrOSucWCI_Y3cWz5a_aCoAsCA9AoE',
+  authDomain: 'chequepass-app-ae4af.firebaseapp.com',
+  projectId: 'chequepass-app-ae4af',
+  storageBucket: 'chequepass-app-ae4af.firebasestorage.app',
+  messagingSenderId: '882532685628',
+  appId: '1:882532685628:web:d01907259c602439a1f039',
 };
 
 // Firebase'i başlatıyoruz
 const app = initializeApp(firebaseConfig);
 
-// Kimlik doğrulama ayarları (Telefon hafızasında oturumu açık tutmak için AsyncStorage ekliyoruz)
+// Kimlik doğrulama ayarları
 export const auth = initializeAuth(app, {
   persistence: getReactNativePersistence(AsyncStorage),
 });
 
-// Veri tabanını dışarı aktarıyoruz
+// Veri tabanı
 export const db = getFirestore(app);
