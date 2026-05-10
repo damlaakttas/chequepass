@@ -234,7 +234,7 @@ const USE_REVENUECAT = true; // ← false'tan true'ya
 Ve API key'i koy (RevenueCat dashboard'dan):
 ```js
 await Purchases.configure({
-  apiKey: 'appl_xxxxxxxxxxxxxxxxx', // ← buraya RevenueCat public SDK key
+  apiKey: 'appl_YYwcRYYMcCSrBdahMNMYavEOwqA', // ← buraya RevenueCat public SDK key
 });
 ```
 
