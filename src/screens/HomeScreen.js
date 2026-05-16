@@ -44,6 +44,7 @@ import { COLORS, FONTS, RADIUS, SHADOW, SPACING } from '../theme/theme';
 import { useApp } from '../context/AppContext';
 import { usePremium } from '../context/PremiumContext';
 import { pickRandom } from '../utils/helpers';
+import { playShuffleSound } from '../utils/sound';
 
 const HomeScreen = ({ navigation }) => {
   const {
@@ -95,8 +96,10 @@ const HomeScreen = ({ navigation }) => {
     if (cards.length) setIdleColor(pickRandom(cards).color);
   }, [activeFriend?.id, currentVariant]);
 
+
   const startShuffle = useCallback(() => {
     if (phase !== 'idle' || !activeFriend || cards.length === 0) return;
+    playShuffleSound();
     setPhase('shuffling');
 
     let i = 0;
