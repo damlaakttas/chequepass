@@ -238,7 +238,10 @@ const HomeScreen = ({ navigation }) => {
     }
   };
 
-  const watchAdForPass = () => {
+  // NOT: Uygulamada reklam SDK'sı yok. "Reklam izle" iddiası Apple
+  // tarafından yanıltıcı işlevsellik sayılır (2.1 / 2.3.1). Bu yüzden
+  // akış "bonus pas" olarak sunulur; reklam vaadi yapılmaz.
+  const claimBonusPass = () => {
     setPassPromptOpen(false);
     setTimeout(async () => {
       grantExtraPass();
@@ -250,7 +253,7 @@ const HomeScreen = ({ navigation }) => {
         }
         setPendingPassTemplate(null);
       }
-      Alert.alert('Ekstra pas kazandın!', 'Bir reklam izledin, pas hakkın yenilendi.');
+      Alert.alert('Ekstra pas kazandın!', 'Bonus pas hakkın tanımlandı.');
     }, 600);
   };
 
@@ -442,12 +445,12 @@ const HomeScreen = ({ navigation }) => {
         maxHeight={380}
       >
         <Text style={styles.modalBody}>
-          Günlük ücretsiz pas hakkını kullandın. Ekstra bir pas hakkı kazanmak için kısa bir
-          reklam izleyebilirsin. Pas hakkın 24 saat içinde otomatik yenilenir.
+          Günlük ücretsiz pas hakkını kullandın. İstersen bir bonus pas hakkı kullanabilirsin.
+          Pas hakkın 24 saat içinde otomatik yenilenir.
         </Text>
-        <TouchableOpacity style={styles.watchBtn} onPress={watchAdForPass} activeOpacity={0.85}>
+        <TouchableOpacity style={styles.watchBtn} onPress={claimBonusPass} activeOpacity={0.85}>
           <PlayCircle size={18} color="#fff" />
-          <Text style={styles.watchBtnText}>Reklam İzle & Pas Kazan</Text>
+          <Text style={styles.watchBtnText}>Bonus Pas Kullan</Text>
         </TouchableOpacity>
       </BottomSheet>
 

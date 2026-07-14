@@ -19,10 +19,13 @@ import {
   sendEmailVerification,
   sendPasswordResetEmail,
   deleteUser,
+  EmailAuthProvider,
+  reauthenticateWithCredential,
 } from 'firebase/auth';
 import {
   doc,
   getDoc,
+  getDocs,
   collection,
   query,
   where,
@@ -31,6 +34,7 @@ import {
   updateDoc,
   deleteDoc,
   serverTimestamp,
+  writeBatch,
 } from 'firebase/firestore';
 import { auth, db } from '../config/firebase';
 import {
@@ -495,6 +499,83 @@ export const AppProvider = ({ children }) => {
     }));
   }, []);
 
+  /**
+   * HESAP SİLME (Apple Guideline 5.1.1(v) gereksinimi).
+   *
+   * Akış:
+   * 1. Şifreyle yeniden doğrulama (Firebase deleteUser "recent login" ister)
+   * 2. Firestore verilerini temizle: cheques, friendships, usernames/{username}, users/{uid}
+   * 3. Firebase Auth hesabını sil
+   * 4. Local state sıfırla (onAuthStateChanged zaten null döner)
+   *
+   * Firestore silmeleri best-effort DEĞİL: veri temizliği başarısız olursa
+   * hata fırlatılır ki kullanıcı tekrar deneyebilsin (Apple, verinin de
+   * silinmesini bekler).
+   */
+  const deleteAccount = useCallback(async (password) => {
+    const currentUser = auth.currentUser;
+    if (!currentUser || !currentUser.email) {
+      throw new Error('Oturum bulunamadı. Lütfen tekrar giriş yapıp dene.');
+    }
+    if (!password) throw new Error('Şifre gerekli');
+
+    // 1) Yeniden doğrulama
+    try {
+      const credential = EmailAuthProvider.credential(currentUser.email, password);
+      await reauthenticateWithCredential(currentUser, credential);
+    } catch (e) {
+      if (
+        e?.code === 'auth/wrong-password' ||
+        e?.code === 'auth/invalid-credential' ||
+        e?.code === 'auth/invalid-login-credentials'
+      ) {
+        throw new Error('Şifre hatalı. Lütfen tekrar dene.');
+      }
+      if (e?.code === 'auth/too-many-requests') {
+        throw new Error('Çok fazla deneme yapıldı. Biraz bekleyip tekrar dene.');
+      }
+      throw new Error('Kimlik doğrulanamadı: ' + (e?.message || 'bilinmeyen hata'));
+    }
+
+    const uid = currentUser.uid;
+
+    // 2) Firestore veri temizliği
+    const refs = [];
+
+    const [chequesSnap, friendshipsSnap, profileSnap] = await Promise.all([
+      getDocs(query(collection(db, 'cheques'), where('participants', 'array-contains', uid))),
+      getDocs(query(collection(db, 'friendships'), where('userIds', 'array-contains', uid))),
+      getDoc(doc(db, 'users', uid)),
+    ]);
+
+    chequesSnap.docs.forEach((d) => refs.push(d.ref));
+    friendshipsSnap.docs.forEach((d) => refs.push(d.ref));
+
+    if (profileSnap.exists()) {
+      const data = profileSnap.data();
+      const usernameLower =
+        data.usernameLower || (data.username ? String(data.username).toLowerCase() : null);
+      if (usernameLower) refs.push(doc(db, 'usernames', usernameLower));
+    }
+    refs.push(doc(db, 'users', uid));
+
+    // Batch limiti 500; güvenli olsun diye 450'lik parçalara böl
+    for (let i = 0; i < refs.length; i += 450) {
+      const batch = writeBatch(db);
+      refs.slice(i, i + 450).forEach((r) => batch.delete(r));
+      await batch.commit();
+    }
+
+    // 3) Auth hesabını sil
+    await deleteUser(currentUser);
+
+    // 4) Local temizlik (auth listener da tetiklenir)
+    try {
+      await AsyncStorage.multiRemove([READ_KEY, PASS_EVENTS_KEY, LAST_PASS_RESET_KEY]);
+    } catch (e) {}
+    setState((prev) => ({ ...seedState(), isOnboarded: prev.isOnboarded }));
+  }, []);
+
   const resetPassword = useCallback(async (email) => {
     if (!email) throw new Error('E-posta gerekli');
     await sendPasswordResetEmail(auth, email.trim().toLowerCase());
@@ -852,6 +933,7 @@ export const AppProvider = ({ children }) => {
       signUp,
       signIn,
       signOut,
+      deleteAccount,
       resetPassword,
       setOnboarded,
       setActiveFriend,
@@ -881,6 +963,7 @@ export const AppProvider = ({ children }) => {
       signUp,
       signIn,
       signOut,
+      deleteAccount,
       resetPassword,
       setOnboarded,
       setActiveFriend,

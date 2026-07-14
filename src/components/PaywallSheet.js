@@ -30,7 +30,7 @@ import { BlurView } from 'expo-blur';
 import { X, Check, Lock, Sparkles } from 'lucide-react-native';
 import ConfettiCannon from 'react-native-confetti-cannon';
 import { COLORS, FONTS, RADIUS, SHADOW, SPACING } from '../theme/theme';
-import { usePremium } from '../context/PremiumContext';
+import { usePremium, ROMANTIC_PRODUCT_ID } from '../context/PremiumContext';
 import { useState, useRef } from 'react';
 
 const TEASE_CARDS = [
@@ -46,10 +46,17 @@ const FEATURES = [
 ];
 
 const PaywallSheet = ({ visible, onClose, onSuccess }) => {
-  const { purchaseRomantic, restorePurchases, purchasing, isMock } = usePremium();
+  const { purchaseRomantic, restorePurchases, purchasing, isMock, offerings } = usePremium();
   const [showConfetti, setShowConfetti] = useState(false);
   const [restoring, setRestoring] = useState(false);
   const confettiRef = useRef(null);
+
+  // Gerçek StoreKit fiyatı (yerelleştirilmiş). Apple, vitrindeki gerçek
+  // fiyattan farklı hard-coded fiyat gösterimini reddedebilir.
+  const romanticPkg = offerings?.availablePackages?.find(
+    (p) => p.product.identifier === ROMANTIC_PRODUCT_ID
+  );
+  const priceString = romanticPkg?.product?.priceString || null;
 
   const handlePurchase = async () => {
     const result = await purchaseRomantic();
@@ -148,9 +155,6 @@ const PaywallSheet = ({ visible, onClose, onSuccess }) => {
 
           {/* Sticky footer */}
           <View style={styles.footer}>
-            <Text style={styles.crossPrice}>
-              <Text style={styles.crossPriceLine}>~149.99 TL~</Text>
-            </Text>
             <TouchableOpacity
               style={[styles.ctaBtn, purchasing && { opacity: 0.6 }]}
               onPress={handlePurchase}
@@ -161,7 +165,9 @@ const PaywallSheet = ({ visible, onClose, onSuccess }) => {
                 <ActivityIndicator color="#fff" />
               ) : (
                 <>
-                  <Text style={styles.ctaText}>99.99 TL ile Kilidi Aç</Text>
+                  <Text style={styles.ctaText}>
+                    {priceString ? `${priceString} ile Kilidi Aç` : 'Kilidi Aç'}
+                  </Text>
                   <Sparkles size={18} color="#fff" />
                 </>
               )}
@@ -315,15 +321,6 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: COLORS.border,
     alignItems: 'center',
-  },
-  crossPrice: {
-    marginBottom: 6,
-  },
-  crossPriceLine: {
-    fontFamily: FONTS.medium,
-    fontSize: 12,
-    color: COLORS.textLight,
-    textDecorationLine: 'line-through',
   },
   ctaBtn: {
     width: '100%',

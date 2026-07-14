@@ -25,6 +25,7 @@ import {
   validateUsername,
 } from '../services/firebase-service';
 import { auth } from '../config/firebase';
+import { TERMS_TEXT, PRIVACY_TEXT } from '../config/legal';
 
 const MODE = { LOGIN: 'login', SIGNUP: 'signup', FORGOT: 'forgot' };
 
@@ -410,36 +411,6 @@ const AuthScreen = () => {
     </SafeAreaView>
   );
 };
-
-const TERMS_TEXT = `ChequePass uygulamasını kullanarak aşağıdaki şartları kabul etmiş sayılırsın.
-
-1. Uygulama; çiftler ve arkadaşlar arasında eğlence amaçlı "hediye çeki" mekaniği sunar. Çeklerin gerçek parasal değeri yoktur.
-
-2. Hesap bilgilerinin güvenliğinden kullanıcı sorumludur. Kullanıcı adı ve e-posta doğruluğunu sağlamak kullanıcının yükümlülüğüdür.
-
-3. Uygulama içi etkileşim (çek gönderme, pas geçme, not yazma) karşılıklı rızaya dayanır. Kullanıcılar birbirine saygılı davranmayı taahhüt eder.
-
-4. Pas hakkı, reklam izleme karşılığında kazanılabilir. Üçüncü taraf reklam ağlarının şartları ayrıca geçerlidir.
-
-5. Uygulama, önceden haber vermeksizin özelliklerini güncelleyebilir veya kaldırabilir.
-
-6. Kötüye kullanım tespit edilen hesaplar askıya alınabilir.
-
-Bu şartları ayrıntılı olarak okuman önerilir.`;
-
-const PRIVACY_TEXT = `Gizliliğine saygı duyuyoruz.
-
-- Hangi verileri toplarız: kullanıcı adı, e-posta, uygulama içi etkileşim verileri (çek geçmişi, notlar, başarılar).
-
-- Neden toplarız: hesabını yönetmek, eşleşme özelliğini sunmak ve deneyimini kişiselleştirmek için.
-
-- Nerede saklanır: Firebase altyapısında şifreli olarak saklanır.
-
-- Üçüncü taraflar: Yalnızca reklam gösterimi için AdMob servisi cihaz düzeyinde anonim tanımlayıcılara erişebilir.
-
-- Haklarınız: Hesap silme, veri dışa aktarma ve düzeltme taleplerinizi profil ekranından iletebilirsin.
-
-- İletişim: privacy@chequepass.app`;
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.background },

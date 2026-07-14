@@ -137,6 +137,7 @@ export const PremiumProvider = ({ children }) => {
         hasRomantic,
         loading,
         purchasing,
+        offerings,
         purchaseRomantic,
         restorePurchases,
         resetMockPremium,

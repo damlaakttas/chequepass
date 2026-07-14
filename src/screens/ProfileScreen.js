@@ -1,6 +1,15 @@
 // src/screens/ProfileScreen.js
 import React, { useState, useMemo } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  Alert,
+  TextInput,
+  ActivityIndicator,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   LogOut,
@@ -15,6 +24,10 @@ import {
   CheckCircle2,
   Heart,
   ChevronRight,
+  Trash2,
+  AlertTriangle,
+  FileText,
+  Shield,
 } from 'lucide-react-native';
 import ScreenHeader from '../components/ScreenHeader';
 import AnimalAvatar from '../components/AnimalAvatar';
@@ -23,15 +36,20 @@ import PaywallSheet from '../components/PaywallSheet';
 import { COLORS, FONTS, RADIUS, SHADOW, SPACING } from '../theme/theme';
 import { useApp } from '../context/AppContext';
 import { usePremium } from '../context/PremiumContext';
+import { TERMS_TEXT, PRIVACY_TEXT } from '../config/legal';
 
 const AVATAR_OPTIONS = ['fox', 'panda', 'koala', 'bunny', 'cat', 'owl'];
 
 const ProfileScreen = () => {
-  const { user, friends, cheques, achievements, signOut, setAvatar } = useApp();
+  const { user, friends, cheques, achievements, signOut, deleteAccount, setAvatar } = useApp();
   const { hasRomantic } = usePremium();
   const [avatarOpen, setAvatarOpen] = useState(false);
   const [paywallOpen, setPaywallOpen] = useState(false);
   const [savingAvatar, setSavingAvatar] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deletePassword, setDeletePassword] = useState('');
+  const [deleting, setDeleting] = useState(false);
+  const [legalOpen, setLegalOpen] = useState(null); // 'terms' | 'privacy' | null
 
   // İstatistikler:
   // - won:    bana ait olan tüm çekler (ister kendi aldım, ister hediye aldım)
@@ -50,6 +68,43 @@ const ProfileScreen = () => {
       { text: 'Vazgeç', style: 'cancel' },
       { text: 'Çıkış Yap', style: 'destructive', onPress: signOut },
     ]);
+  };
+
+  const openDeleteSheet = () => {
+    setDeletePassword('');
+    setDeleteOpen(true);
+  };
+
+  const handleDeleteAccount = () => {
+    if (deleting) return;
+    if (!deletePassword.trim()) {
+      Alert.alert('Şifre gerekli', 'Hesabını silmek için şifreni girmelisin.');
+      return;
+    }
+    Alert.alert(
+      'Hesabını silmek üzeresin',
+      'Bu işlem geri alınamaz. Profilin, arkadaşlıkların ve tüm çeklerin kalıcı olarak silinecek. Devam etmek istiyor musun?',
+      [
+        { text: 'Vazgeç', style: 'cancel' },
+        {
+          text: 'Kalıcı Olarak Sil',
+          style: 'destructive',
+          onPress: async () => {
+            setDeleting(true);
+            try {
+              await deleteAccount(deletePassword.trim());
+              // deleteAccount başarılıysa auth listener kullanıcıyı
+              // otomatik olarak giriş ekranına düşürür.
+              setDeleteOpen(false);
+            } catch (e) {
+              Alert.alert('Hesap silinemedi', e?.message || 'Bilinmeyen bir hata oluştu.');
+            } finally {
+              setDeleting(false);
+            }
+          },
+        },
+      ]
+    );
   };
 
   const handleAvatarSelect = async (key) => {
@@ -199,9 +254,44 @@ const ProfileScreen = () => {
           </View>
         </View>
 
+        {/* Yasal */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Yasal</Text>
+          <View style={styles.infoCard}>
+            <TouchableOpacity
+              style={styles.infoRow}
+              onPress={() => setLegalOpen('terms')}
+              activeOpacity={0.7}
+            >
+              <FileText size={16} color={COLORS.textMuted} />
+              <Text style={styles.infoLabel}>Kullanım Şartları</Text>
+              <ChevronRight size={16} color={COLORS.textMuted} />
+            </TouchableOpacity>
+            <View style={styles.divider} />
+            <TouchableOpacity
+              style={styles.infoRow}
+              onPress={() => setLegalOpen('privacy')}
+              activeOpacity={0.7}
+            >
+              <Shield size={16} color={COLORS.textMuted} />
+              <Text style={styles.infoLabel}>Gizlilik Politikası</Text>
+              <ChevronRight size={16} color={COLORS.textMuted} />
+            </TouchableOpacity>
+          </View>
+        </View>
+
         <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout} activeOpacity={0.85}>
           <LogOut size={16} color={COLORS.danger} />
           <Text style={styles.logoutText}>Çıkış Yap</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.deleteAccountBtn}
+          onPress={openDeleteSheet}
+          activeOpacity={0.85}
+        >
+          <Trash2 size={14} color={COLORS.textMuted} />
+          <Text style={styles.deleteAccountText}>Hesabı Sil</Text>
         </TouchableOpacity>
 
         <Text style={styles.version}>ChequePass v1.0.0</Text>
@@ -237,6 +327,72 @@ const ProfileScreen = () => {
         onClose={() => setPaywallOpen(false)}
         onSuccess={() => {}}
       />
+
+      {/* Yasal metinler */}
+      <BottomSheet
+        visible={!!legalOpen}
+        onClose={() => setLegalOpen(null)}
+        title={legalOpen === 'terms' ? 'Kullanım Şartları' : 'Gizlilik Politikası'}
+      >
+        <Text style={styles.legalBody}>
+          {legalOpen === 'terms' ? TERMS_TEXT : PRIVACY_TEXT}
+        </Text>
+      </BottomSheet>
+
+      {/* Hesap silme (Apple 5.1.1(v)) */}
+      <BottomSheet
+        visible={deleteOpen}
+        onClose={() => !deleting && setDeleteOpen(false)}
+        title="Hesabı Sil"
+        maxHeight={460}
+      >
+        <View style={styles.deleteWarnBox}>
+          <AlertTriangle size={18} color="#b91c1c" />
+          <Text style={styles.deleteWarnText}>
+            Bu işlem geri alınamaz. Hesabın silindiğinde profilin, kullanıcı adın,
+            arkadaşlıkların ve tüm çeklerin kalıcı olarak silinir.
+          </Text>
+        </View>
+
+        <Text style={styles.deleteLabel}>
+          Onaylamak için hesabının şifresini gir:
+        </Text>
+        <TextInput
+          style={styles.deleteInput}
+          value={deletePassword}
+          onChangeText={setDeletePassword}
+          placeholder="Şifren"
+          placeholderTextColor={COLORS.textLight}
+          secureTextEntry
+          autoCapitalize="none"
+          autoCorrect={false}
+          editable={!deleting}
+        />
+
+        <TouchableOpacity
+          style={[styles.deleteConfirmBtn, deleting && { opacity: 0.6 }]}
+          onPress={handleDeleteAccount}
+          disabled={deleting}
+          activeOpacity={0.85}
+        >
+          {deleting ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <>
+              <Trash2 size={16} color="#fff" />
+              <Text style={styles.deleteConfirmText}>Hesabımı Kalıcı Olarak Sil</Text>
+            </>
+          )}
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.deleteCancelBtn}
+          onPress={() => !deleting && setDeleteOpen(false)}
+          disabled={deleting}
+        >
+          <Text style={styles.deleteCancelText}>Vazgeç</Text>
+        </TouchableOpacity>
+      </BottomSheet>
     </SafeAreaView>
   );
 };
@@ -457,6 +613,85 @@ const styles = StyleSheet.create({
     fontFamily: FONTS.semiBold,
     fontSize: 14,
     color: COLORS.danger,
+  },
+  deleteAccountBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginHorizontal: SPACING.lg,
+    marginTop: SPACING.sm,
+    paddingVertical: 12,
+  },
+  deleteAccountText: {
+    fontFamily: FONTS.medium,
+    fontSize: 13,
+    color: COLORS.textMuted,
+    textDecorationLine: 'underline',
+  },
+  legalBody: {
+    fontFamily: FONTS.regular,
+    fontSize: 13,
+    color: COLORS.text,
+    lineHeight: 20,
+  },
+  deleteWarnBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    backgroundColor: '#fee2e2',
+    borderRadius: RADIUS.md,
+    padding: 12,
+    marginBottom: SPACING.md,
+  },
+  deleteWarnText: {
+    flex: 1,
+    fontFamily: FONTS.regular,
+    fontSize: 13,
+    color: '#7f1d1d',
+    lineHeight: 19,
+  },
+  deleteLabel: {
+    fontFamily: FONTS.medium,
+    fontSize: 13,
+    color: COLORS.text,
+    marginBottom: 8,
+  },
+  deleteInput: {
+    backgroundColor: COLORS.background,
+    borderRadius: RADIUS.md,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontFamily: FONTS.regular,
+    fontSize: 14,
+    color: COLORS.text,
+    marginBottom: SPACING.md,
+  },
+  deleteConfirmBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#dc2626',
+    paddingVertical: 14,
+    borderRadius: RADIUS.pill,
+  },
+  deleteConfirmText: {
+    fontFamily: FONTS.semiBold,
+    fontSize: 14,
+    color: '#fff',
+  },
+  deleteCancelBtn: {
+    alignItems: 'center',
+    paddingVertical: 12,
+    marginTop: 4,
+  },
+  deleteCancelText: {
+    fontFamily: FONTS.medium,
+    fontSize: 13,
+    color: COLORS.textMuted,
   },
   version: {
     fontFamily: FONTS.regular,
