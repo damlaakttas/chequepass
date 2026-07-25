@@ -428,8 +428,13 @@ export const AppProvider = ({ children }) => {
     if (!validation.valid) throw new Error(validation.error);
     const cleanUsername = validation.value;
 
-    const available = await checkUsernameAvailable(cleanUsername);
-    if (!available) throw new Error('Bu kullanıcı adı zaten alınmış');
+    // Yumuşak kontrol: sadece kullanıcı adı KESİN olarak alınmışsa erken dur.
+    // 'unknown' (auth öncesi okuma başarısız) ise kaydı BLOKLAMA — asıl
+    // benzersizlik kontrolü aşağıda writeUserAndUsername transaction'ında.
+    const availability = await checkUsernameAvailable(cleanUsername);
+    if (availability === 'taken') {
+      throw new Error('Bu kullanıcı adı zaten alınmış');
+    }
 
     signupInProgressRef.current = true;
 

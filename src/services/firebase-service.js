@@ -7,6 +7,7 @@ import {
   serverTimestamp,
   collection,
   updateDoc,
+  runTransaction,
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
 
@@ -32,51 +33,77 @@ export const validateUsername = (username) => {
   return { valid: true, value: trimmed };
 };
 
+// Sadece UI ipucu için "yumuşak" kontrol. Auth öncesi çalıştığı için
+// okuma başarısız olabilir; bu durumda HATA FIRLATMAZ, 'unknown' döner.
+// Gerçek benzersizlik kontrolü kayıt anında transaction ile yapılır.
+// Dönüş: 'available' | 'taken' | 'unknown'
 export const checkUsernameAvailable = async (username) => {
   const usernameLower = username.toLowerCase();
   try {
     const snap = await getDoc(doc(db, 'usernames', usernameLower));
-    return !snap.exists();
+    return snap.exists() ? 'taken' : 'available';
   } catch (e) {
-    console.warn('checkUsernameAvailable failed:', e.code, e.message);
-    throw new Error('Kullanıcı adı kontrol edilemedi, tekrar dene');
+    console.warn('checkUsernameAvailable soft-check failed:', e.code, e.message);
+    return 'unknown';
   }
 };
 
 // ---- User profile helpers ---------------------------------------------------
 
+// Özel hata: kullanıcı adı başkası tarafından alınmış.
+export class UsernameTakenError extends Error {
+  constructor() {
+    super('Bu kullanıcı adı zaten alınmış');
+    this.code = 'username-taken';
+    this.name = 'UsernameTakenError';
+  }
+}
+
+// Kullanıcı ve username kaydını ATOMİK yazar. Kullanıcı bu noktada
+// kimliği doğrulanmış (auth'lu) olduğu için okuma güvenle çalışır.
+// Transaction sayesinde iki kişi aynı anda aynı adı alamaz.
 export const writeUserAndUsername = async ({ uid, username, email, avatar }) => {
   const usernameLower = username.toLowerCase();
   const userRef = doc(db, 'users', uid);
   const usernameRef = doc(db, 'usernames', usernameLower);
 
   try {
-    await setDoc(userRef, {
-      uid,
-      username,
-      usernameLower,
-      email: email.toLowerCase(),
-      avatar,
-      createdAt: serverTimestamp(),
-    });
-  } catch (e) {
-    console.error('User doc write failed:', e.code, e.message);
-    throw new Error('Profil kaydedilemedi: ' + (e.message || 'bilinmeyen hata'));
-  }
+    await runTransaction(db, async (tx) => {
+      const existing = await tx.get(usernameRef);
+      let needUsernameDoc = true;
+      if (existing.exists()) {
+        // Başkası almışsa hata; aynı kullanıcının tekrar denemesiyse
+        // username doc'una dokunma (rules 'update: if false').
+        if (existing.data()?.uid !== uid) {
+          throw new UsernameTakenError();
+        }
+        needUsernameDoc = false;
+      }
 
-  try {
-    await setDoc(usernameRef, {
-      uid,
-      createdAt: serverTimestamp(),
+      tx.set(userRef, {
+        uid,
+        username,
+        usernameLower,
+        email: email.toLowerCase(),
+        avatar,
+        createdAt: serverTimestamp(),
+      });
+
+      if (needUsernameDoc) {
+        tx.set(usernameRef, {
+          uid,
+          username,
+          usernameLower,
+          createdAt: serverTimestamp(),
+        });
+      }
     });
   } catch (e) {
-    console.error('Username doc write failed:', e.code, e.message);
-    try {
-      await deleteDoc(userRef);
-    } catch (cleanupErr) {
-      console.warn('User doc cleanup failed:', cleanupErr);
+    if (e instanceof UsernameTakenError || e.code === 'username-taken') {
+      throw e;
     }
-    throw new Error('Kullanıcı adı kaydedilemedi: ' + (e.message || 'bilinmeyen hata'));
+    console.error('writeUserAndUsername failed:', e.code, e.message);
+    throw new Error('Profil kaydedilemedi: ' + (e.message || 'bilinmeyen hata'));
   }
 };
 

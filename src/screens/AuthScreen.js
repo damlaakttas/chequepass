@@ -86,13 +86,17 @@ const AuthScreen = () => {
     setUsernameMsg('Kontrol ediliyor...');
     checkTimerRef.current = setTimeout(async () => {
       try {
-        const available = await checkUsernameAvailable(validation.value);
-        if (available) {
+        const availability = await checkUsernameAvailable(validation.value);
+        if (availability === 'available') {
           setUsernameStatus('available');
           setUsernameMsg('Bu kullanıcı adı müsait');
-        } else {
+        } else if (availability === 'taken') {
           setUsernameStatus('taken');
           setUsernameMsg('Bu kullanıcı adı zaten alınmış');
+        } else {
+          // 'unknown': kontrol edilemedi ama kaydı engelleme.
+          setUsernameStatus('idle');
+          setUsernameMsg('');
         }
       } catch (e) {
         setUsernameStatus('idle');
