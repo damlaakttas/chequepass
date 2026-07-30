@@ -20,14 +20,19 @@ const HEADER_W = 200;
 const HEADER_H = 46;
 
 const HERO_SIZE = 180;
+// Yatay marka logosu için dikdörtgen kutu (genişlik + oran).
+const HERO_W = 240;
+const HERO_RATIO = 0.62;
 
 const AppLogo = ({ variant = 'header', size }) => {
   if (variant === 'hero') {
-    const dim = size || HERO_SIZE;
+    // Giriş ekranı: "chequepass" yazan yatay marka logosu (logo.png).
+    const w = size || HERO_W;
+    const h = w * HERO_RATIO;
     return (
-      <View style={[styles.heroBox, { width: dim, height: dim }]}>
+      <View style={[styles.heroBox, { width: w, height: h }]}>
         <Image
-          source={require('../../assets/amblem.png')}
+          source={require('../../assets/logo.png')}
           style={styles.imageFill}
           resizeMode="contain"
         />

@@ -208,6 +208,7 @@ export const createCheque = async ({
   direction,
   reason = '',
   participants,
+  deckVariant = 'normal',
 }) => {
   const ref = doc(collection(db, 'cheques'));
   await setDoc(ref, {
@@ -221,6 +222,7 @@ export const createCheque = async ({
     color: template.color,
     reason: reason || '',
     direction,
+    deckVariant, // 'normal' | 'romantic' — Çeklerim'de kalpli tema için
     status: 'active',
     createdAt: serverTimestamp(),
   });

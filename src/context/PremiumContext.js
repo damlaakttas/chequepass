@@ -80,10 +80,11 @@ export const PremiumProvider = ({ children }) => {
           (p) => p.product.identifier === ROMANTIC_PRODUCT_ID
         );
         if (!pkg) throw new Error('Romantik paket bulunamadı');
-        const { customerInfo } = await Purchases.purchasePackage(pkg);
-        const isActive = !!customerInfo.entitlements.active[ROMANTIC_ENTITLEMENT];
-        setHasRomantic(isActive);
-        return { success: isActive };
+        // İlişkiye özel model: ürün "consumable"; kalıcı entitlement beklenmez.
+        // Satın alma işlemi hatasız tamamlandıysa BAŞARILI say. Aktivasyon
+        // (hangi ilişki için) AppContext.activateRomanticForFriend ile yapılır.
+        await Purchases.purchasePackage(pkg);
+        return { success: true };
       } else {
         // MOCK: 800ms gecikmeli simülasyon
         await new Promise((r) => setTimeout(r, 800));

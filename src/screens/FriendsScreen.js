@@ -34,7 +34,6 @@ const FriendsScreen = () => {
     rejectFriendRequest,
     updateFriendRelation,
   } = useApp();
-  const { hasRomantic } = usePremium();
 
   const route = useRoute();
   const [tab, setTab] = useState('friends');
@@ -59,7 +58,7 @@ const FriendsScreen = () => {
    * VE bu paywall daha önce gösterilmediyse → tek kerelik tease göster.
    */
   const triggerPartnerPaywall = async () => {
-    if (hasRomantic) return; // zaten alınmış
+    // Romantik paket artık ilişkiye özel; burada sadece tek seferlik tanıtım göster.
     try {
       const teased = await AsyncStorage.getItem(PAYWALL_TEASED_KEY);
       if (teased === 'true') return; // bir kere gösterildi

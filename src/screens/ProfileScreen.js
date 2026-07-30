@@ -42,7 +42,8 @@ const AVATAR_OPTIONS = ['fox', 'panda', 'koala', 'bunny', 'cat', 'owl'];
 
 const ProfileScreen = () => {
   const { user, friends, cheques, achievements, signOut, deleteAccount, setAvatar } = useApp();
-  const { hasRomantic } = usePremium();
+  // Romantik paket ilişkiye özel: herhangi bir ilişkide aktifse "aktif" say.
+  const hasRomantic = friends.some((f) => f.romanticActive === true);
   const [avatarOpen, setAvatarOpen] = useState(false);
   const [paywallOpen, setPaywallOpen] = useState(false);
   const [savingAvatar, setSavingAvatar] = useState(false);
@@ -171,7 +172,12 @@ const ProfileScreen = () => {
         {!hasRomantic ? (
           <TouchableOpacity
             style={styles.premiumBanner}
-            onPress={() => setPaywallOpen(true)}
+            onPress={() =>
+              Alert.alert(
+                'Romantik Paket',
+                'Romantik paket kişiye özeldir. Kopart ekranında sevgilini/arkadaşını seçip oradan satın alarak o ilişki için etkinleştirebilirsin.'
+              )
+            }
             activeOpacity={0.85}
           >
             <View style={styles.premiumIconCircle}>

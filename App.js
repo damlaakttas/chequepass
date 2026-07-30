@@ -15,6 +15,7 @@ import {
 import { AppProvider } from './src/context/AppContext';
 import { PremiumProvider } from './src/context/PremiumContext';
 import RootNavigator from './src/navigation/RootNavigator';
+import SplashVideo from './src/components/SplashVideo';
 import { COLORS } from './src/theme/theme';
 
 export default function App() {
@@ -24,6 +25,7 @@ export default function App() {
     Poppins_600SemiBold,
     Poppins_700Bold,
   });
+  const [splashDone, setSplashDone] = React.useState(false);
 
   if (!fontsLoaded) {
     return (
@@ -42,6 +44,7 @@ export default function App() {
             <RootNavigator />
           </AppProvider>
         </PremiumProvider>
+        {!splashDone && <SplashVideo onFinish={() => setSplashDone(true)} />}
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

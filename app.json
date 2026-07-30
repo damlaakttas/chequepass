@@ -2,7 +2,7 @@
   "expo": {
     "name": "ChequePass",
     "slug": "chequepass",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "orientation": "portrait",
     "icon": "./assets/amblem.png",
     "userInterfaceStyle": "light",
@@ -17,7 +17,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.damlaaktas.chequepass",
-      "buildNumber": "4",
+      "buildNumber": "9",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
@@ -37,6 +37,15 @@
         "expo-font",
         {
           "fonts": []
+        }
+      ],
+      "expo-notifications",
+      [
+        "react-native-google-mobile-ads",
+        {
+          "iosAppId": "ca-app-pub-3940256099942544~1458002511",
+          "androidAppId": "ca-app-pub-3940256099942544~3347511713",
+          "userTrackingUsageDescription": "Sana daha uygun reklamlar gösterebilmek için kullanılır."
         }
       ]
     ],

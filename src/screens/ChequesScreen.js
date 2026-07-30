@@ -14,6 +14,7 @@ import { Inbox, Gift, CheckCircle2, FileText, X, Edit3, Trash2 } from 'lucide-re
 import { Swipeable } from 'react-native-gesture-handler';
 import ScreenHeader from '../components/ScreenHeader';
 import BottomSheet from '../components/BottomSheet';
+import HeartsBackground from '../components/HeartsBackground';
 import { COLORS, FONTS, RADIUS, SHADOW, SPACING } from '../theme/theme';
 import { useApp } from '../context/AppContext';
 import { formatDate, formatRelative } from '../utils/helpers';
@@ -179,12 +180,18 @@ const ChequesScreen = () => {
   const SwipeableChequeRow = ({ item }) => {
     const swipeRef = useRef(null);
 
+    const isRomantic = item.deckVariant === 'romantic';
     const card = (
       <TouchableOpacity
-        style={[styles.row, item.status === 'used' && styles.rowUsed]}
+        style={[
+          styles.row,
+          item.status === 'used' && styles.rowUsed,
+          isRomantic && styles.rowRomantic,
+        ]}
         onPress={() => openDetail(item)}
         activeOpacity={0.85}
       >
+        {isRomantic && <HeartsBackground color="#dc2626" />}
         <View style={[styles.colorStrip, { backgroundColor: item.color }]} />
         <View style={{ flex: 1 }}>
           <View style={styles.rowTop}>
@@ -494,6 +501,9 @@ const styles = StyleSheet.create({
     borderRadius: RADIUS.md,
     overflow: 'hidden',
     ...SHADOW.soft,
+  },
+  rowRomantic: {
+    backgroundColor: '#fff1f2', // hafif kırmızımsı zemin (romantik çek)
   },
   rowUsed: {
     opacity: 0.55,

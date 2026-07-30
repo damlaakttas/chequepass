@@ -1,0 +1,13 @@
+{
+  "name": "chequepass-functions",
+  "description": "ChequePass Cloud Functions - push bildirimleri",
+  "main": "index.js",
+  "engines": {
+    "node": "20"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.6.0",
+    "firebase-functions": "^6.0.0"
+  },
+  "private": true
+}

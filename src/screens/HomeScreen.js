@@ -40,11 +40,16 @@ import DeckCard from '../components/DeckCard';
 import OnboardingOverlay from '../components/OnboardingOverlay';
 import BottomSheet from '../components/BottomSheet';
 import PaywallSheet from '../components/PaywallSheet';
+import HeartsBackground from '../components/HeartsBackground';
 import { COLORS, FONTS, RADIUS, SHADOW, SPACING } from '../theme/theme';
 import { useApp } from '../context/AppContext';
 import { usePremium } from '../context/PremiumContext';
 import { pickRandom } from '../utils/helpers';
 import { playShuffleSound } from '../utils/sound';
+import { showRewardedAd } from '../services/ads';
+
+// Romantik mod kart renkleri (kırmızının tonları)
+const ROMANTIC_REDS = ['#dc2626', '#e11d48', '#be123c', '#f43f5e', '#b91c1c', '#e8506b'];
 
 const HomeScreen = ({ navigation }) => {
   const {
@@ -57,9 +62,11 @@ const HomeScreen = ({ navigation }) => {
     freePassUsed,
     grantExtraPass,
     setSelectedDeckVariant,
+    activateRomanticForFriend,
   } = useApp();
 
-  const { hasRomantic } = usePremium();
+  // Romantik paket artık cihaz geneli değil, AKTİF İLİŞKİYE özel.
+  const romanticActive = activeDeckInfo.romanticActive === true;
 
   const cards = activeDeckInfo.cards;
   const currentVariant = activeDeckInfo.currentVariant;
@@ -106,15 +113,18 @@ const HomeScreen = ({ navigation }) => {
     const tickMs = 100;
     const totalMs = 1500;
     const ticks = Math.floor(totalMs / tickMs);
-    setShufflePreview(pickRandom(cards));
+    // Romantik modda kart yüzünü kırmızının tonlarına boya.
+    const tint = (t) =>
+      t && currentVariant === 'romantic' ? { ...t, color: pickRandom(ROMANTIC_REDS) } : t;
+    setShufflePreview(tint(pickRandom(cards)));
 
     shuffleTimerRef.current = setInterval(() => {
       i++;
-      setShufflePreview(pickRandom(cards));
+      setShufflePreview(tint(pickRandom(cards)));
       if (i >= ticks) {
         clearInterval(shuffleTimerRef.current);
         shuffleTimerRef.current = null;
-        const finalT = pickRandom(cards);
+        const finalT = tint(pickRandom(cards));
         setCurrentTemplate(finalT);
         setShufflePreview(null);
         setPhase('ready');
@@ -153,12 +163,17 @@ const HomeScreen = ({ navigation }) => {
 
   const goToIdle = () => {
     setCurrentTemplate(null);
-    if (cards.length) setIdleColor(pickRandom(cards).color);
+    if (currentVariant === 'romantic') {
+      // Romantik modda kart yüzü kırmızının tonlarında.
+      setIdleColor(pickRandom(ROMANTIC_REDS));
+    } else if (cards.length) {
+      setIdleColor(pickRandom(cards).color);
+    }
     setPhase('idle');
   };
 
   const handleVariantSelect = (variant) => {
-    if (variant === 'romantic' && !hasRomantic) {
+    if (variant === 'romantic' && !romanticActive) {
       setPaywallOpen(true);
       return;
     }
@@ -238,12 +253,11 @@ const HomeScreen = ({ navigation }) => {
     }
   };
 
-  // NOT: Uygulamada reklam SDK'sı yok. "Reklam izle" iddiası Apple
-  // tarafından yanıltıcı işlevsellik sayılır (2.1 / 2.3.1). Bu yüzden
-  // akış "bonus pas" olarak sunulur; reklam vaadi yapılmaz.
-  const claimBonusPass = () => {
+  // Pas hakkı bitince ödüllü reklam göster; izlenirse ekstra pas ver.
+  // Reklam altyapısı yoksa (Expo Go / yükleme hatası) bonus pas ile devam et.
+  const claimBonusPass = async () => {
     setPassPromptOpen(false);
-    setTimeout(async () => {
+    const grantAndResolve = async () => {
       grantExtraPass();
       if (pendingPassTemplate) {
         try {
@@ -253,8 +267,16 @@ const HomeScreen = ({ navigation }) => {
         }
         setPendingPassTemplate(null);
       }
-      Alert.alert('Ekstra pas kazandın!', 'Bonus pas hakkın tanımlandı.');
-    }, 600);
+    };
+
+    const { available, rewarded } = await showRewardedAd();
+    if (available && !rewarded) {
+      // Reklam gösterildi ama sonuna kadar izlenmedi → pas verilmez.
+      Alert.alert('Pas verilmedi', 'Ekstra pas için reklamı sonuna kadar izlemen gerekiyor.');
+      return;
+    }
+    await grantAndResolve();
+    Alert.alert('Ekstra pas kazandın!', 'Bonus pas hakkın tanımlandı.');
   };
 
   const directionLabel = pendingResolve?.direction === 'gift'
@@ -272,6 +294,8 @@ const HomeScreen = ({ navigation }) => {
       <ScreenHeader />
 
       <View style={styles.container}>
+        {/* Romantik modda sabit kalpli arka plan (normal modda yok) */}
+        {currentVariant === 'romantic' && <HeartsBackground color="#dc2626" />}
         {!activeFriend ? (
           <View style={styles.emptyBox}>
             <UserPlus size={40} color={COLORS.textMuted} />
@@ -300,7 +324,7 @@ const HomeScreen = ({ navigation }) => {
 
               {/* Premium yoksa: kilitli "Romantik" ikon */}
               {/* Premium varsa: Normal/Romantik switcher */}
-              {phase === 'idle' && !hasRomantic && (
+              {phase === 'idle' && !romanticActive && (
                 <TouchableOpacity
                   style={styles.lockedRomanticBtn}
                   onPress={() => setPaywallOpen(true)}
@@ -312,7 +336,7 @@ const HomeScreen = ({ navigation }) => {
                 </TouchableOpacity>
               )}
 
-              {phase === 'idle' && hasRomantic && (
+              {phase === 'idle' && romanticActive && (
                 <View style={styles.variantSwitcher}>
                   <TouchableOpacity
                     style={[
@@ -432,7 +456,14 @@ const HomeScreen = ({ navigation }) => {
       <PaywallSheet
         visible={paywallOpen}
         onClose={() => setPaywallOpen(false)}
-        onSuccess={() => {
+        onSuccess={async () => {
+          // Satın alma başarılı → romantik paketi AKTİF İLİŞKİYE bağla.
+          try {
+            await activateRomanticForFriend(activeFriend?.id);
+          } catch (e) {
+            Alert.alert('Hata', e.message || 'Romantik paket etkinleştirilemedi');
+            return;
+          }
           setSelectedDeckVariant('romantic');
           goToIdle();
         }}
@@ -445,12 +476,12 @@ const HomeScreen = ({ navigation }) => {
         maxHeight={380}
       >
         <Text style={styles.modalBody}>
-          Günlük ücretsiz pas hakkını kullandın. İstersen bir bonus pas hakkı kullanabilirsin.
-          Pas hakkın 24 saat içinde otomatik yenilenir.
+          Günlük ücretsiz pas hakkını kullandın. Kısa bir reklam izleyerek ekstra pas
+          kazanabilirsin. Pas hakkın 24 saat içinde otomatik yenilenir.
         </Text>
         <TouchableOpacity style={styles.watchBtn} onPress={claimBonusPass} activeOpacity={0.85}>
           <PlayCircle size={18} color="#fff" />
-          <Text style={styles.watchBtnText}>Bonus Pas Kullan</Text>
+          <Text style={styles.watchBtnText}>Reklam İzle & Pas Kazan</Text>
         </TouchableOpacity>
       </BottomSheet>
 

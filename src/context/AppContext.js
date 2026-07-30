@@ -37,6 +37,7 @@ import {
   writeBatch,
 } from 'firebase/firestore';
 import { auth, db } from '../config/firebase';
+import { registerPushToken } from '../services/notifications';
 import {
   writeUserAndUsername,
   checkUsernameAvailable,
@@ -225,6 +226,8 @@ export const AppProvider = ({ children }) => {
                 createdAt: profile.createdAt,
               },
             }));
+            // Push bildirim token'ını kaydet (arka plan bildirimleri için).
+            registerPushToken(currentUser.uid).catch(() => {});
           } else {
             console.warn('User has no Firestore profile, signing out');
             await fbSignOut(auth);
@@ -275,6 +278,9 @@ export const AppProvider = ({ children }) => {
               username: otherInfo.username || 'bilinmeyen',
               avatar: otherInfo.avatar || null,
               relation: otherInfo.relation || 'friend',
+              // Romantik paket bu İLİŞKİYE özel; iki kullanıcıda da aynı görünür.
+              romanticActive: r.romantic?.active === true,
+              romanticPurchasedBy: r.romantic?.purchasedBy || null,
               acceptedAtMillis: tsToMillis(r.acceptedAt) || tsToMillis(r.createdAt),
               createdAtMillis: tsToMillis(r.createdAt),
             };
@@ -575,9 +581,18 @@ export const AppProvider = ({ children }) => {
     await deleteUser(currentUser);
 
     // 4) Local temizlik (auth listener da tetiklenir)
+    // STORAGE_KEY dahil hepsini temizle ki başarılar (achievements) ve
+    // yerel premium izi bir sonraki hesaba taşınmasın.
     try {
-      await AsyncStorage.multiRemove([READ_KEY, PASS_EVENTS_KEY, LAST_PASS_RESET_KEY]);
+      await AsyncStorage.multiRemove([
+        STORAGE_KEY,
+        READ_KEY,
+        PASS_EVENTS_KEY,
+        LAST_PASS_RESET_KEY,
+        '@chequepass_premium_v1', // yerel romantik izi (mock/fallback)
+      ]);
     } catch (e) {}
+    // Achievements dahil tüm state sıfırdan seed'lenir (başarılar kilitli döner).
     setState((prev) => ({ ...seedState(), isOnboarded: prev.isOnboarded }));
   }, []);
 
@@ -639,6 +654,30 @@ export const AppProvider = ({ children }) => {
       throw new Error('İlişki türü güncellenemedi: ' + (e.message || 'bilinmeyen hata'));
     }
   }, []);
+
+  /**
+   * Romantik paketi BELİRLİ bir ilişkiye aktive eder.
+   * Satın alma başarılı olduktan sonra çağrılır. friendship dokümanına yazılır,
+   * böylece her iki kullanıcı da (real-time listener ile) romantik moda geçer.
+   * Hesap silinince friendship silindiği için romantik de otomatik gider.
+   */
+  const activateRomanticForFriend = useCallback(async (friendshipId) => {
+    const fid = friendshipId || state.activeFriendId;
+    if (!fid) throw new Error('İlişki bulunamadı');
+    const uid = state.user?.uid;
+    try {
+      await updateDoc(doc(db, 'friendships', fid), {
+        romantic: {
+          active: true,
+          purchasedBy: uid || null,
+          purchasedAt: serverTimestamp(),
+        },
+      });
+    } catch (e) {
+      console.error('Romantik aktive edilemedi:', e);
+      throw new Error('Romantik paket etkinleştirilemedi: ' + (e.message || 'bilinmeyen hata'));
+    }
+  }, [state.activeFriendId, state.user?.uid]);
 
   // ---- Local actions -----------------------------------------------
 
@@ -707,6 +746,9 @@ export const AppProvider = ({ children }) => {
       const fromId = direction === 'keep' ? otherUid : currentUser.uid;
       const toId = ownerId;
 
+      const isRomantic =
+        activeFriend.romanticActive === true && state.selectedDeckVariant === 'romantic';
+
       await createCheque({
         template,
         friendshipId: activeFriendId,
@@ -716,9 +758,10 @@ export const AppProvider = ({ children }) => {
         direction,
         reason: note || '',
         participants: [currentUser.uid, otherUid],
+        deckVariant: isRomantic ? 'romantic' : 'normal',
       });
     },
-    [state.user, state.activeFriendId, state.friends]
+    [state.user, state.activeFriendId, state.friends, state.selectedDeckVariant]
   );
 
   const updateChequeNote = useCallback(async (chequeId, note) => {
@@ -889,11 +932,16 @@ export const AppProvider = ({ children }) => {
    * kart döndürür; HomeScreen premium'a göre nihai filtreleme yapar.
    */
   const activeDeckInfo = useMemo(() => {
-    if (!activeFriend) return { cards: [], baseVariant: 'friend', currentVariant: 'normal' };
+    if (!activeFriend) {
+      return { cards: [], baseVariant: 'friend', currentVariant: 'normal', romanticActive: false };
+    }
 
     const isPartner = activeFriend.relation === 'partner';
     const baseVariant = isPartner ? 'partner' : 'friend';
-    const currentVariant = state.selectedDeckVariant || 'normal';
+    // Romantik yalnızca bu ilişkide satın alınmışsa kullanılabilir.
+    const romanticActive = activeFriend.romanticActive === true;
+    const requested = state.selectedDeckVariant || 'normal';
+    const currentVariant = requested === 'romantic' && romanticActive ? 'romantic' : 'normal';
 
     let cards;
     if (currentVariant === 'romantic') {
@@ -902,7 +950,7 @@ export const AppProvider = ({ children }) => {
       cards = state.decks[baseVariant] || [];
     }
 
-    return { cards, baseVariant, currentVariant };
+    return { cards, baseVariant, currentVariant, romanticActive };
   }, [activeFriend, state.selectedDeckVariant, state.decks]);
 
   const chequesForActiveFriend = useMemo(() => {
@@ -947,6 +995,7 @@ export const AppProvider = ({ children }) => {
       rejectFriendRequest,
       removeFriend,
       updateFriendRelation,
+      activateRomanticForFriend,
       resolveCheque,
       updateChequeNote,
       useChequeCard,
@@ -977,6 +1026,7 @@ export const AppProvider = ({ children }) => {
       rejectFriendRequest,
       removeFriend,
       updateFriendRelation,
+      activateRomanticForFriend,
       resolveCheque,
       updateChequeNote,
       useChequeCard,
