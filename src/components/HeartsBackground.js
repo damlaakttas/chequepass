@@ -7,19 +7,32 @@ import React from 'react';
 import { View, StyleSheet } from 'react-native';
 import { Heart } from 'lucide-react-native';
 
-// Sabit yerleşim (yüzde bazlı) — her zaman aynı görünür.
+// Sabit yerleşim (yüzde bazlı) — her zaman aynı görünür, kutuyu dolduracak sıklıkta.
 const HEARTS = [
-  { top: '6%', left: '8%', size: 20, o: 0.10, r: '-12deg' },
-  { top: '12%', left: '72%', size: 30, o: 0.14, r: '10deg' },
-  { top: '24%', left: '40%', size: 16, o: 0.08, r: '6deg' },
-  { top: '34%', left: '84%', size: 22, o: 0.12, r: '-8deg' },
-  { top: '44%', left: '14%', size: 26, o: 0.10, r: '14deg' },
-  { top: '52%', left: '58%', size: 18, o: 0.09, r: '-6deg' },
-  { top: '63%', left: '30%', size: 30, o: 0.13, r: '8deg' },
-  { top: '70%', left: '80%', size: 16, o: 0.08, r: '-14deg' },
-  { top: '80%', left: '48%', size: 24, o: 0.11, r: '4deg' },
-  { top: '86%', left: '12%', size: 18, o: 0.09, r: '-10deg' },
-  { top: '90%', left: '70%', size: 22, o: 0.10, r: '12deg' },
+  { top: '3%', left: '6%', size: 26, o: 0.22, r: '-12deg' },
+  { top: '5%', left: '38%', size: 18, o: 0.18, r: '8deg' },
+  { top: '4%', left: '70%', size: 32, o: 0.24, r: '10deg' },
+  { top: '9%', left: '88%', size: 20, o: 0.19, r: '-8deg' },
+  { top: '15%', left: '20%', size: 24, o: 0.21, r: '6deg' },
+  { top: '17%', left: '55%', size: 30, o: 0.23, r: '-6deg' },
+  { top: '20%', left: '82%', size: 22, o: 0.19, r: '14deg' },
+  { top: '27%', left: '10%', size: 28, o: 0.22, r: '-10deg' },
+  { top: '30%', left: '44%', size: 20, o: 0.18, r: '4deg' },
+  { top: '32%', left: '72%', size: 26, o: 0.22, r: '-14deg' },
+  { top: '40%', left: '26%', size: 32, o: 0.24, r: '8deg' },
+  { top: '43%', left: '60%', size: 22, o: 0.19, r: '-4deg' },
+  { top: '46%', left: '88%', size: 24, o: 0.20, r: '12deg' },
+  { top: '54%', left: '8%', size: 24, o: 0.21, r: '-8deg' },
+  { top: '56%', left: '40%', size: 30, o: 0.23, r: '6deg' },
+  { top: '58%', left: '74%', size: 20, o: 0.18, r: '-12deg' },
+  { top: '66%', left: '22%', size: 26, o: 0.22, r: '10deg' },
+  { top: '69%', left: '56%', size: 22, o: 0.19, r: '-6deg' },
+  { top: '72%', left: '86%', size: 28, o: 0.22, r: '8deg' },
+  { top: '80%', left: '12%', size: 30, o: 0.23, r: '-10deg' },
+  { top: '82%', left: '46%', size: 20, o: 0.18, r: '4deg' },
+  { top: '84%', left: '76%', size: 24, o: 0.21, r: '-14deg' },
+  { top: '92%', left: '30%', size: 26, o: 0.22, r: '12deg' },
+  { top: '94%', left: '66%', size: 22, o: 0.19, r: '-8deg' },
 ];
 
 const HeartsBackground = ({ color = '#dc2626', style }) => {

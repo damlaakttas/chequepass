@@ -46,7 +46,6 @@ import { useApp } from '../context/AppContext';
 import { usePremium } from '../context/PremiumContext';
 import { pickRandom } from '../utils/helpers';
 import { playShuffleSound } from '../utils/sound';
-import { showRewardedAd } from '../services/ads';
 
 // Romantik mod kart renkleri (kırmızının tonları)
 const ROMANTIC_REDS = ['#dc2626', '#e11d48', '#be123c', '#f43f5e', '#b91c1c', '#e8506b'];
@@ -89,12 +88,16 @@ const HomeScreen = ({ navigation }) => {
   const shuffleY = useSharedValue(0);
   const shuffleTimerRef = useRef(null);
 
-  // Idle rengini ayarla
+  // Idle rengini ayarla. Romantik moda geçilince kart yüzü ANINDA kırmızı olsun.
   useEffect(() => {
-    if (!idleColor && cards.length) {
+    if (phase !== 'idle') return;
+    if (currentVariant === 'romantic') {
+      setIdleColor(pickRandom(ROMANTIC_REDS));
+    } else if (cards.length) {
       setIdleColor(pickRandom(cards).color);
     }
-  }, [cards, idleColor]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentVariant, cards]);
 
   // Aktif arkadaş değişince fazı resetle
   useEffect(() => {
@@ -253,11 +256,10 @@ const HomeScreen = ({ navigation }) => {
     }
   };
 
-  // Pas hakkı bitince ödüllü reklam göster; izlenirse ekstra pas ver.
-  // Reklam altyapısı yoksa (Expo Go / yükleme hatası) bonus pas ile devam et.
-  const claimBonusPass = async () => {
+  // Pas hakkı bitince bonus pas ver. (Reklam entegrasyonu Adım 3'te eklenecek.)
+  const claimBonusPass = () => {
     setPassPromptOpen(false);
-    const grantAndResolve = async () => {
+    setTimeout(async () => {
       grantExtraPass();
       if (pendingPassTemplate) {
         try {
@@ -267,16 +269,8 @@ const HomeScreen = ({ navigation }) => {
         }
         setPendingPassTemplate(null);
       }
-    };
-
-    const { available, rewarded } = await showRewardedAd();
-    if (available && !rewarded) {
-      // Reklam gösterildi ama sonuna kadar izlenmedi → pas verilmez.
-      Alert.alert('Pas verilmedi', 'Ekstra pas için reklamı sonuna kadar izlemen gerekiyor.');
-      return;
-    }
-    await grantAndResolve();
-    Alert.alert('Ekstra pas kazandın!', 'Bonus pas hakkın tanımlandı.');
+      Alert.alert('Ekstra pas kazandın!', 'Bonus pas hakkın tanımlandı.');
+    }, 600);
   };
 
   const directionLabel = pendingResolve?.direction === 'gift'
@@ -291,11 +285,14 @@ const HomeScreen = ({ navigation }) => {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
+      {/* Romantik modda tüm ekranı kaplayan sabit kalpli arka plan (normal modda yok) */}
+      {currentVariant === 'romantic' && (
+        <HeartsBackground color="#dc2626" style={styles.heartsFull} />
+      )}
+
       <ScreenHeader />
 
       <View style={styles.container}>
-        {/* Romantik modda sabit kalpli arka plan (normal modda yok) */}
-        {currentVariant === 'romantic' && <HeartsBackground color="#dc2626" />}
         {!activeFriend ? (
           <View style={styles.emptyBox}>
             <UserPlus size={40} color={COLORS.textMuted} />
@@ -395,7 +392,7 @@ const HomeScreen = ({ navigation }) => {
                 <>
                   {phase === 'idle' && idleColor && (
                     <View style={styles.deckWrap}>
-                      <DeckCard color={idleColor} />
+                      <DeckCard color={currentVariant === 'romantic' ? (idleColor || ROMANTIC_REDS[0]) : idleColor} />
                       <TouchableOpacity
                         style={styles.copartBtn}
                         onPress={startShuffle}
@@ -476,12 +473,12 @@ const HomeScreen = ({ navigation }) => {
         maxHeight={380}
       >
         <Text style={styles.modalBody}>
-          Günlük ücretsiz pas hakkını kullandın. Kısa bir reklam izleyerek ekstra pas
-          kazanabilirsin. Pas hakkın 24 saat içinde otomatik yenilenir.
+          Günlük ücretsiz pas hakkını kullandın. İstersen bir bonus pas hakkı kullanabilirsin.
+          Pas hakkın 24 saat içinde otomatik yenilenir.
         </Text>
         <TouchableOpacity style={styles.watchBtn} onPress={claimBonusPass} activeOpacity={0.85}>
           <PlayCircle size={18} color="#fff" />
-          <Text style={styles.watchBtnText}>Reklam İzle & Pas Kazan</Text>
+          <Text style={styles.watchBtnText}>Bonus Pas Kullan</Text>
         </TouchableOpacity>
       </BottomSheet>
 
@@ -609,6 +606,7 @@ const staticStyles = StyleSheet.create({
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.background },
+  heartsFull: { zIndex: 0 },
   container: { flex: 1, paddingHorizontal: SPACING.lg },
   topInfo: {
     alignItems: 'center',

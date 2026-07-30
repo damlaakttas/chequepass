@@ -30,7 +30,7 @@ const SplashVideo = ({ onFinish }) => {
       <Video
         source={require('../../assets/splash-video.mp4')}
         style={styles.video}
-        resizeMode={ResizeMode.COVER}
+        resizeMode={ResizeMode.CONTAIN}
         shouldPlay
         isLooping={false}
         isMuted

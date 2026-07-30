@@ -37,7 +37,6 @@ import {
   writeBatch,
 } from 'firebase/firestore';
 import { auth, db } from '../config/firebase';
-import { registerPushToken } from '../services/notifications';
 import {
   writeUserAndUsername,
   checkUsernameAvailable,
@@ -226,8 +225,6 @@ export const AppProvider = ({ children }) => {
                 createdAt: profile.createdAt,
               },
             }));
-            // Push bildirim token'ını kaydet (arka plan bildirimleri için).
-            registerPushToken(currentUser.uid).catch(() => {});
           } else {
             console.warn('User has no Firestore profile, signing out');
             await fbSignOut(auth);

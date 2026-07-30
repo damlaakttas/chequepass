@@ -28,11 +28,8 @@ export default function App() {
   const [splashDone, setSplashDone] = React.useState(false);
 
   if (!fontsLoaded) {
-    return (
-      <View style={styles.loading}>
-        <ActivityIndicator size="large" color={COLORS.primaryDark} />
-      </View>
-    );
+    // Spinner yok: splash videosuyla kesintisiz geçiş için düz arka plan.
+    return <View style={styles.loading} />;
   }
 
   return (

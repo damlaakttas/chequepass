@@ -7,8 +7,8 @@
     "icon": "./assets/amblem.png",
     "userInterfaceStyle": "light",
     "splash": {
-      "image": "./assets/amblem.png",
-      "resizeMode": "contain",
+      "image": "./assets/splash-blank.png",
+      "resizeMode": "cover",
       "backgroundColor": "#f0e9e9"
     },
     "assetBundlePatterns": [
@@ -17,7 +17,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.damlaaktas.chequepass",
-      "buildNumber": "9",
+      "buildNumber": "12",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
@@ -37,15 +37,6 @@
         "expo-font",
         {
           "fonts": []
-        }
-      ],
-      "expo-notifications",
-      [
-        "react-native-google-mobile-ads",
-        {
-          "iosAppId": "ca-app-pub-3940256099942544~1458002511",
-          "androidAppId": "ca-app-pub-3940256099942544~3347511713",
-          "userTrackingUsageDescription": "Sana daha uygun reklamlar gösterebilmek için kullanılır."
         }
       ]
     ],
