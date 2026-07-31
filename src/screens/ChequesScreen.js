@@ -16,6 +16,7 @@ import ScreenHeader from '../components/ScreenHeader';
 import BottomSheet from '../components/BottomSheet';
 import HeartsBackground from '../components/HeartsBackground';
 import { COLORS, FONTS, RADIUS, SHADOW, SPACING } from '../theme/theme';
+import { ROMANTIC, ROMANTIC_VARIANT } from '../theme/romantic';
 import { useApp } from '../context/AppContext';
 import { formatDate, formatRelative } from '../utils/helpers';
 
@@ -180,7 +181,7 @@ const ChequesScreen = () => {
   const SwipeableChequeRow = ({ item }) => {
     const swipeRef = useRef(null);
 
-    const isRomantic = item.deckVariant === 'romantic';
+    const isRomantic = item.deckVariant === ROMANTIC_VARIANT;
     const card = (
       <TouchableOpacity
         style={[
@@ -191,11 +192,14 @@ const ChequesScreen = () => {
         onPress={() => openDetail(item)}
         activeOpacity={0.85}
       >
-        {isRomantic && <HeartsBackground color="#dc2626" />}
+        {/* Romantik çeke özel: kart zemininde kalp deseni */}
+        {isRomantic && <HeartsBackground variant="row" color={ROMANTIC.heart} />}
         <View style={[styles.colorStrip, { backgroundColor: item.color }]} />
         <View style={{ flex: 1 }}>
           <View style={styles.rowTop}>
-            <Text style={styles.rowTitle}>{item.title}</Text>
+            <Text style={[styles.rowTitle, isRomantic && styles.rowTitleRomantic]}>
+              {item.title}
+            </Text>
             {item.status === 'used' && (
               <View style={styles.usedBadge}>
                 <CheckCircle2 size={12} color={COLORS.textMuted} />
@@ -331,7 +335,15 @@ const ChequesScreen = () => {
       >
         {selected && (
           <View>
-            <View style={styles.detailHeader}>
+            <View
+              style={[
+                styles.detailHeader,
+                selected.deckVariant === ROMANTIC_VARIANT && styles.detailHeaderRomantic,
+              ]}
+            >
+              {selected.deckVariant === ROMANTIC_VARIANT && (
+                <HeartsBackground variant="row" color={ROMANTIC.heart} />
+              )}
               <View style={[styles.detailStripe, { backgroundColor: selected.color }]} />
               <View style={{ flex: 1 }}>
                 <Text style={styles.detailTitle}>{selected.title}</Text>
@@ -503,7 +515,12 @@ const styles = StyleSheet.create({
     ...SHADOW.soft,
   },
   rowRomantic: {
-    backgroundColor: '#fff1f2', // hafif kırmızımsı zemin (romantik çek)
+    backgroundColor: ROMANTIC.rowBg, // hafif gül zemin (romantik çek)
+    borderWidth: 1,
+    borderColor: ROMANTIC.rowBorder,
+  },
+  rowTitleRomantic: {
+    color: ROMANTIC.accentDark,
   },
   rowUsed: {
     opacity: 0.55,
@@ -587,6 +604,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
     marginBottom: SPACING.md,
+  },
+  detailHeaderRomantic: {
+    backgroundColor: ROMANTIC.rowBg,
+    borderWidth: 1,
+    borderColor: ROMANTIC.rowBorder,
+    borderRadius: RADIUS.md,
+    padding: 12,
+    overflow: 'hidden',
   },
   detailStripe: { width: 6, height: 48, borderRadius: 3 },
   detailTitle: { fontFamily: FONTS.bold, fontSize: 18, color: COLORS.text },

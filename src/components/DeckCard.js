@@ -2,16 +2,20 @@
 //
 // Kart "kapalı" yüzü. Idle modunda gösterilir.
 // İçerik: kart rengi + amblem ortada (desen) — yazı yok.
-// Yan kartlar (gri stack) yok; tek temiz kart.
+// Romantik varyantta kart sırtında beyaz kalp deseni belirir.
 
 import React from 'react';
 import { View, Image, StyleSheet } from 'react-native';
+import HeartsBackground from './HeartsBackground';
 import { COLORS, RADIUS, SHADOW, SPACING } from '../theme/theme';
 import { CARD_W, CARD_H } from './ChequeCard';
 
-const DeckCard = ({ color }) => {
+const DeckCard = ({ color, romantic = false }) => {
   return (
     <View style={[styles.card, { backgroundColor: color || COLORS.primary }]}>
+      {/* Romantik: kart sırtında yumuşak beyaz kalpler */}
+      {romantic && <HeartsBackground variant="card" color="#ffffff" intensity={1.6} />}
+
       {/* İç border (kart sırtı dekoru) */}
       <View style={styles.innerBorder}>
         <View style={styles.amblemWrap}>

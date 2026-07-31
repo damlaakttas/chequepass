@@ -40,15 +40,18 @@ import DeckCard from '../components/DeckCard';
 import OnboardingOverlay from '../components/OnboardingOverlay';
 import BottomSheet from '../components/BottomSheet';
 import PaywallSheet from '../components/PaywallSheet';
-import HeartsBackground from '../components/HeartsBackground';
+import RomanticBackdrop from '../components/RomanticBackdrop';
 import { COLORS, FONTS, RADIUS, SHADOW, SPACING } from '../theme/theme';
+import {
+  ROMANTIC,
+  isRomanticVariant,
+  resolveIdleColor,
+  tintTemplate,
+} from '../theme/romantic';
 import { useApp } from '../context/AppContext';
 import { usePremium } from '../context/PremiumContext';
 import { pickRandom } from '../utils/helpers';
 import { playShuffleSound } from '../utils/sound';
-
-// Romantik mod kart renkleri (kırmızının tonları)
-const ROMANTIC_REDS = ['#dc2626', '#e11d48', '#be123c', '#f43f5e', '#b91c1c', '#e8506b'];
 
 const HomeScreen = ({ navigation }) => {
   const {
@@ -70,6 +73,7 @@ const HomeScreen = ({ navigation }) => {
   const cards = activeDeckInfo.cards;
   const currentVariant = activeDeckInfo.currentVariant;
   const baseVariant = activeDeckInfo.baseVariant; // 'partner' veya 'friend'
+  const isRomanticMode = isRomanticVariant(currentVariant);
 
   const [phase, setPhase] = useState('idle');
   const [currentTemplate, setCurrentTemplate] = useState(null);
@@ -88,23 +92,29 @@ const HomeScreen = ({ navigation }) => {
   const shuffleY = useSharedValue(0);
   const shuffleTimerRef = useRef(null);
 
-  // Idle rengini ayarla. Romantik moda geçilince kart yüzü ANINDA kırmızı olsun.
+  // Varyant veya aktif arkadaş değişince: akışı sıfırla ve kapalı kartın rengini
+  // DOĞRUDAN yeni varyanta göre ata. (Eskiden iki ayrı effect vardı; ikincisi
+  // birincinin romantik rengini normal deste rengiyle eziyordu — "Romantik"e ilk
+  // tıklamada kart kırmızı gelmemesinin sebebi buydu.)
   useEffect(() => {
-    if (phase !== 'idle') return;
-    if (currentVariant === 'romantic') {
-      setIdleColor(pickRandom(ROMANTIC_REDS));
-    } else if (cards.length) {
-      setIdleColor(pickRandom(cards).color);
+    if (shuffleTimerRef.current) {
+      clearInterval(shuffleTimerRef.current);
+      shuffleTimerRef.current = null;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentVariant, cards]);
-
-  // Aktif arkadaş değişince fazı resetle
-  useEffect(() => {
-    setPhase('idle');
+    setShufflePreview(null);
     setCurrentTemplate(null);
-    if (cards.length) setIdleColor(pickRandom(cards).color);
+    setPhase('idle');
+    setIdleColor(resolveIdleColor(currentVariant, cards));
+    // `cards` bilerek bağımlılıkta değil: Firestore deste güncellemesi
+    // devam eden bir kopart akışını bozmasın.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeFriend?.id, currentVariant]);
+
+  // Uygulama ilk açılışında deste Firestore'dan sonra gelirse rengi tamamla.
+  useEffect(() => {
+    if (phase !== 'idle' || idleColor || !cards.length) return;
+    setIdleColor(resolveIdleColor(currentVariant, cards));
+  }, [cards, currentVariant, phase, idleColor]);
 
 
   const startShuffle = useCallback(() => {
@@ -117,8 +127,7 @@ const HomeScreen = ({ navigation }) => {
     const totalMs = 1500;
     const ticks = Math.floor(totalMs / tickMs);
     // Romantik modda kart yüzünü kırmızının tonlarına boya.
-    const tint = (t) =>
-      t && currentVariant === 'romantic' ? { ...t, color: pickRandom(ROMANTIC_REDS) } : t;
+    const tint = (t) => tintTemplate(t, currentVariant);
     setShufflePreview(tint(pickRandom(cards)));
 
     shuffleTimerRef.current = setInterval(() => {
@@ -149,7 +158,7 @@ const HomeScreen = ({ navigation }) => {
       withTiming(-8, { duration: 160 }),
       withTiming(0, { duration: 160 })
     );
-  }, [phase, activeFriend, cards, shuffleRotate, shuffleY]);
+  }, [phase, activeFriend, cards, currentVariant, shuffleRotate, shuffleY]);
 
   useEffect(() => {
     return () => {
@@ -166,22 +175,21 @@ const HomeScreen = ({ navigation }) => {
 
   const goToIdle = () => {
     setCurrentTemplate(null);
-    if (currentVariant === 'romantic') {
-      // Romantik modda kart yüzü kırmızının tonlarında.
-      setIdleColor(pickRandom(ROMANTIC_REDS));
-    } else if (cards.length) {
-      setIdleColor(pickRandom(cards).color);
-    }
+    setShufflePreview(null);
+    setIdleColor(resolveIdleColor(currentVariant, cards));
     setPhase('idle');
   };
 
   const handleVariantSelect = (variant) => {
+    if (variant === currentVariant) return;
     if (variant === 'romantic' && !romanticActive) {
       setPaywallOpen(true);
       return;
     }
+    // Rengi burada set etmiyoruz; varyant değişince yukarıdaki effect
+    // yeni varyanta göre doğru rengi atıyor. (Aksi halde eski varyantın
+    // rengi bir kare boyunca görünürdü.)
     setSelectedDeckVariant(variant);
-    goToIdle();
   };
 
   const handleResolve = async (direction) => {
@@ -285,10 +293,8 @@ const HomeScreen = ({ navigation }) => {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      {/* Romantik modda tüm ekranı kaplayan sabit kalpli arka plan (normal modda yok) */}
-      {currentVariant === 'romantic' && (
-        <HeartsBackground color="#dc2626" style={styles.heartsFull} />
-      )}
+      {/* Romantik modda tüm ekranı kaplayan gradient + kalp deseni (normal modda yok) */}
+      {isRomanticMode && <RomanticBackdrop />}
 
       <ScreenHeader />
 
@@ -312,8 +318,9 @@ const HomeScreen = ({ navigation }) => {
           <>
             {/* Üst başlık - "@xxx ile oynuyorsun" KALDIRILDI */}
             <View style={styles.topInfo}>
-              <Text style={styles.prompt}>
-                {phase === 'idle' && 'Şansını dene, çekini kopart'}
+              <Text style={[styles.prompt, isRomanticMode && styles.promptRomantic]}>
+                {phase === 'idle' &&
+                  (isRomanticMode ? 'Romantik çekini kopart' : 'Şansını dene, çekini kopart')}
                 {phase === 'shuffling' && 'Kartlar karıştırılıyor...'}
                 {phase === 'ready' && 'Kartı kaydır'}
                 {phase === 'noting' && ' '}
@@ -334,7 +341,9 @@ const HomeScreen = ({ navigation }) => {
               )}
 
               {phase === 'idle' && romanticActive && (
-                <View style={styles.variantSwitcher}>
+                <View
+                  style={[styles.variantSwitcher, isRomanticMode && styles.variantSwitcherRomantic]}
+                >
                   <TouchableOpacity
                     style={[
                       styles.variantTab,
@@ -392,14 +401,18 @@ const HomeScreen = ({ navigation }) => {
                 <>
                   {phase === 'idle' && idleColor && (
                     <View style={styles.deckWrap}>
-                      <DeckCard color={currentVariant === 'romantic' ? (idleColor || ROMANTIC_REDS[0]) : idleColor} />
+                      <DeckCard color={idleColor} romantic={isRomanticMode} />
                       <TouchableOpacity
-                        style={styles.copartBtn}
+                        style={[styles.copartBtn, isRomanticMode && styles.copartBtnRomantic]}
                         onPress={startShuffle}
                         activeOpacity={0.85}
                       >
                         <View style={styles.copartBtnInner}>
-                          <Layers size={26} color="#fff" />
+                          {isRomanticMode ? (
+                            <Heart size={26} color="#fff" fill="#fff" />
+                          ) : (
+                            <Layers size={26} color="#fff" />
+                          )}
                           <Text style={styles.copartBtnText}>KOPART</Text>
                         </View>
                       </TouchableOpacity>
@@ -429,18 +442,23 @@ const HomeScreen = ({ navigation }) => {
             </View>
 
             <View style={styles.hintRow}>
-              <View style={styles.hintPill}>
-                <Text style={styles.hintEmoji}>↑</Text>
-                <Text style={styles.hintLabel}>Hediye Et</Text>
-              </View>
-              <View style={styles.hintPill}>
-                <Text style={styles.hintEmoji}>↓</Text>
-                <Text style={styles.hintLabel}>Kendine Al</Text>
-              </View>
-              <View style={styles.hintPill}>
-                <Text style={styles.hintEmoji}>←</Text>
-                <Text style={styles.hintLabel}>Pas</Text>
-              </View>
+              {[
+                { arrow: '↑', label: 'Hediye Et' },
+                { arrow: '↓', label: 'Kendine Al' },
+                { arrow: '←', label: 'Pas' },
+              ].map((h) => (
+                <View
+                  key={h.label}
+                  style={[styles.hintPill, isRomanticMode && styles.hintPillRomantic]}
+                >
+                  <Text style={[styles.hintEmoji, isRomanticMode && styles.hintTextRomantic]}>
+                    {h.arrow}
+                  </Text>
+                  <Text style={[styles.hintLabel, isRomanticMode && styles.hintTextRomantic]}>
+                    {h.label}
+                  </Text>
+                </View>
+              ))}
             </View>
           </>
         )}
@@ -461,8 +479,8 @@ const HomeScreen = ({ navigation }) => {
             Alert.alert('Hata', e.message || 'Romantik paket etkinleştirilemedi');
             return;
           }
+          // Varyant değişimi effect'i tetikler; renk/faz orada sıfırlanır.
           setSelectedDeckVariant('romantic');
-          goToIdle();
         }}
       />
 
@@ -606,7 +624,6 @@ const staticStyles = StyleSheet.create({
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.background },
-  heartsFull: { zIndex: 0 },
   container: { flex: 1, paddingHorizontal: SPACING.lg },
   topInfo: {
     alignItems: 'center',
@@ -620,6 +637,9 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     minHeight: 28,
     letterSpacing: -0.4,
+  },
+  promptRomantic: {
+    color: ROMANTIC.accentDark,
   },
   // Premium yoksa: kilitli buton
   lockedRomanticBtn: {
@@ -645,6 +665,11 @@ const styles = StyleSheet.create({
     borderRadius: RADIUS.pill,
     padding: 4,
     ...SHADOW.soft,
+  },
+  variantSwitcherRomantic: {
+    backgroundColor: 'rgba(255,255,255,0.9)',
+    borderWidth: 1,
+    borderColor: ROMANTIC.rowBorder,
   },
   variantTab: {
     flexDirection: 'row',
@@ -692,6 +717,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     ...SHADOW.strong,
   },
+  copartBtnRomantic: {
+    backgroundColor: ROMANTIC.accent,
+    borderWidth: 3,
+    borderColor: 'rgba(255,255,255,0.85)',
+  },
   copartBtnInner: {
     alignItems: 'center',
     justifyContent: 'center',
@@ -728,6 +758,11 @@ const styles = StyleSheet.create({
     borderRadius: RADIUS.pill,
     ...SHADOW.soft,
   },
+  hintPillRomantic: {
+    backgroundColor: 'rgba(255,255,255,0.92)',
+    borderWidth: 1,
+    borderColor: ROMANTIC.rowBorder,
+  },
   hintEmoji: {
     fontFamily: FONTS.bold,
     fontSize: 13,
@@ -737,6 +772,9 @@ const styles = StyleSheet.create({
     fontFamily: FONTS.medium,
     fontSize: 12,
     color: COLORS.textMuted,
+  },
+  hintTextRomantic: {
+    color: ROMANTIC.accentDark,
   },
   emptyBox: {
     flex: 1,

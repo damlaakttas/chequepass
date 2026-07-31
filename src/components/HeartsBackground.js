@@ -1,57 +1,118 @@
 // src/components/HeartsBackground.js
 //
-// Sabit (animasyonsuz) kalp deseni. Romantik modda kartın/kutunun arkasına konur.
-// Yalnızca romantik paket aktifken gösterilir; normal modda kullanılmaz.
+// Sabit (animasyonsuz) kalp deseni — romantik paketin görsel imzası.
+// Yalnızca romantik varyantta kullanılır.
+//
+// variant:
+//   'screen' → tüm ekranı kaplayan seyrek/geniş desen (Kopart sayfası)
+//   'row'    → çek listesi satırı gibi kısa/yatay alanlar (Çeklerim)
+//   'card'   → kart sırtı için beyaz, çok yumuşak desen (DeckCard)
+//
+// Not: lucide ikonu yerine tek bir Path kullanılıyor; konumlandırma
+// mutlak konumlu View sarmalayıcılarla yapılıyor. Bu, platformlar arası
+// en öngörülebilir davranışı verir ve listelerde daha ucuzdur.
 
 import React from 'react';
 import { View, StyleSheet } from 'react-native';
-import { Heart } from 'lucide-react-native';
+import Svg, { Path } from 'react-native-svg';
+import { ROMANTIC } from '../theme/romantic';
 
-// Sabit yerleşim (yüzde bazlı) — her zaman aynı görünür, kutuyu dolduracak sıklıkta.
-const HEARTS = [
-  { top: '3%', left: '6%', size: 26, o: 0.22, r: '-12deg' },
-  { top: '5%', left: '38%', size: 18, o: 0.18, r: '8deg' },
-  { top: '4%', left: '70%', size: 32, o: 0.24, r: '10deg' },
-  { top: '9%', left: '88%', size: 20, o: 0.19, r: '-8deg' },
-  { top: '15%', left: '20%', size: 24, o: 0.21, r: '6deg' },
-  { top: '17%', left: '55%', size: 30, o: 0.23, r: '-6deg' },
-  { top: '20%', left: '82%', size: 22, o: 0.19, r: '14deg' },
-  { top: '27%', left: '10%', size: 28, o: 0.22, r: '-10deg' },
-  { top: '30%', left: '44%', size: 20, o: 0.18, r: '4deg' },
-  { top: '32%', left: '72%', size: 26, o: 0.22, r: '-14deg' },
-  { top: '40%', left: '26%', size: 32, o: 0.24, r: '8deg' },
-  { top: '43%', left: '60%', size: 22, o: 0.19, r: '-4deg' },
-  { top: '46%', left: '88%', size: 24, o: 0.20, r: '12deg' },
-  { top: '54%', left: '8%', size: 24, o: 0.21, r: '-8deg' },
-  { top: '56%', left: '40%', size: 30, o: 0.23, r: '6deg' },
-  { top: '58%', left: '74%', size: 20, o: 0.18, r: '-12deg' },
-  { top: '66%', left: '22%', size: 26, o: 0.22, r: '10deg' },
-  { top: '69%', left: '56%', size: 22, o: 0.19, r: '-6deg' },
-  { top: '72%', left: '86%', size: 28, o: 0.22, r: '8deg' },
-  { top: '80%', left: '12%', size: 30, o: 0.23, r: '-10deg' },
-  { top: '82%', left: '46%', size: 20, o: 0.18, r: '4deg' },
-  { top: '84%', left: '76%', size: 24, o: 0.21, r: '-14deg' },
-  { top: '92%', left: '30%', size: 26, o: 0.22, r: '12deg' },
-  { top: '94%', left: '66%', size: 22, o: 0.19, r: '-8deg' },
+const HEART_PATH =
+  'M12 21.2s-7.6-4.7-9.7-9.3C1 8.4 2.6 4.8 6 3.7c2.2-.7 4.5.2 6 2.2 1.5-2 3.8-2.9 6-2.2 3.4 1.1 5 4.7 3.7 8.2-2.1 4.6-9.7 9.3-9.7 9.3z';
+
+// t/l: yüzde konum · s: boyut(px) · o: opaklık · r: derece · f: dolu mu
+const SCREEN_HEARTS = [
+  { t: '2%', l: '7%', s: 30, o: 0.16, r: '-14deg', f: true },
+  { t: '4%', l: '46%', s: 18, o: 0.1, r: '10deg', f: false },
+  { t: '1%', l: '78%', s: 24, o: 0.14, r: '16deg', f: true },
+  { t: '9%', l: '24%', s: 16, o: 0.1, r: '6deg', f: false },
+  { t: '11%', l: '64%', s: 34, o: 0.13, r: '-8deg', f: true },
+  { t: '15%', l: '88%', s: 20, o: 0.12, r: '18deg', f: false },
+  { t: '20%', l: '4%', s: 26, o: 0.14, r: '12deg', f: false },
+  { t: '23%', l: '38%', s: 15, o: 0.09, r: '-6deg', f: true },
+  { t: '26%', l: '82%', s: 30, o: 0.13, r: '-16deg', f: true },
+  { t: '33%', l: '16%', s: 20, o: 0.11, r: '8deg', f: true },
+  { t: '37%', l: '58%', s: 17, o: 0.09, r: '-10deg', f: false },
+  { t: '41%', l: '90%', s: 24, o: 0.12, r: '14deg', f: false },
+  { t: '46%', l: '2%', s: 28, o: 0.13, r: '-12deg', f: true },
+  { t: '50%', l: '44%', s: 16, o: 0.08, r: '6deg', f: false },
+  { t: '54%', l: '76%', s: 22, o: 0.12, r: '-18deg', f: true },
+  { t: '60%', l: '20%', s: 32, o: 0.14, r: '10deg', f: true },
+  { t: '64%', l: '60%', s: 18, o: 0.1, r: '-6deg', f: false },
+  { t: '68%', l: '89%', s: 26, o: 0.13, r: '16deg', f: true },
+  { t: '73%', l: '6%', s: 20, o: 0.11, r: '-10deg', f: false },
+  { t: '77%', l: '40%', s: 28, o: 0.13, r: '12deg', f: true },
+  { t: '80%', l: '72%', s: 16, o: 0.09, r: '-14deg', f: false },
+  { t: '86%', l: '14%', s: 24, o: 0.13, r: '8deg', f: true },
+  { t: '89%', l: '52%', s: 19, o: 0.1, r: '-8deg', f: false },
+  { t: '91%', l: '84%', s: 30, o: 0.14, r: '14deg', f: true },
 ];
 
-const HeartsBackground = ({ color = '#dc2626', style }) => {
+const ROW_HEARTS = [
+  { t: '6%', l: '14%', s: 18, o: 0.16, r: '-12deg', f: true },
+  { t: '38%', l: '30%', s: 13, o: 0.12, r: '10deg', f: false },
+  { t: '8%', l: '48%', s: 22, o: 0.14, r: '14deg', f: true },
+  { t: '52%', l: '62%', s: 15, o: 0.13, r: '-8deg', f: false },
+  { t: '4%', l: '72%', s: 16, o: 0.15, r: '6deg', f: true },
+  { t: '46%', l: '84%', s: 24, o: 0.14, r: '-16deg', f: true },
+  { t: '10%', l: '92%', s: 13, o: 0.11, r: '12deg', f: false },
+  { t: '60%', l: '20%', s: 14, o: 0.12, r: '16deg', f: true },
+  { t: '58%', l: '46%', s: 12, o: 0.1, r: '-6deg', f: false },
+];
+
+const CARD_HEARTS = [
+  { t: '5%', l: '10%', s: 26, o: 0.16, r: '-14deg', f: true },
+  { t: '8%', l: '62%', s: 18, o: 0.12, r: '10deg', f: false },
+  { t: '17%', l: '34%', s: 15, o: 0.11, r: '6deg', f: true },
+  { t: '22%', l: '82%', s: 22, o: 0.14, r: '16deg', f: true },
+  { t: '31%', l: '6%', s: 19, o: 0.12, r: '-8deg', f: false },
+  { t: '38%', l: '52%', s: 14, o: 0.1, r: '12deg', f: true },
+  { t: '44%', l: '86%', s: 17, o: 0.12, r: '-12deg', f: false },
+  { t: '56%', l: '16%', s: 24, o: 0.14, r: '8deg', f: true },
+  { t: '62%', l: '68%', s: 16, o: 0.11, r: '-16deg', f: true },
+  { t: '71%', l: '38%', s: 20, o: 0.12, r: '14deg', f: false },
+  { t: '78%', l: '8%', s: 15, o: 0.11, r: '-6deg', f: true },
+  { t: '82%', l: '78%', s: 26, o: 0.15, r: '10deg', f: true },
+  { t: '90%', l: '46%', s: 17, o: 0.12, r: '-10deg', f: false },
+];
+
+const LAYOUTS = {
+  screen: SCREEN_HEARTS,
+  row: ROW_HEARTS,
+  card: CARD_HEARTS,
+};
+
+const HeartsBackground = ({
+  color = ROMANTIC.heart,
+  variant = 'screen',
+  intensity = 1,
+  style,
+}) => {
+  const hearts = LAYOUTS[variant] || SCREEN_HEARTS;
+
   return (
     <View style={[styles.container, style]} pointerEvents="none">
-      {HEARTS.map((h, i) => (
-        <Heart
-          key={i}
-          size={h.size}
-          color={color}
-          fill={color}
+      {hearts.map((h, i) => (
+        <View
+          key={`${variant}-${i}`}
           style={{
             position: 'absolute',
-            top: h.top,
-            left: h.left,
-            opacity: h.o,
+            top: h.t,
+            left: h.l,
+            opacity: Math.min(1, h.o * intensity),
             transform: [{ rotate: h.r }],
           }}
-        />
+        >
+          <Svg width={h.s} height={h.s} viewBox="0 0 24 24">
+            <Path
+              d={HEART_PATH}
+              fill={h.f ? color : 'none'}
+              stroke={h.f ? 'none' : color}
+              strokeWidth={h.f ? 0 : 1.7}
+              strokeLinejoin="round"
+            />
+          </Svg>
+        </View>
       ))}
     </View>
   );
@@ -64,4 +125,4 @@ const styles = StyleSheet.create({
   },
 });
 
-export default HeartsBackground;
+export default React.memo(HeartsBackground);
