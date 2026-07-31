@@ -30,6 +30,35 @@ if (USE_REVENUECAT) {
   Purchases = require('react-native-purchases').default;
 }
 
+/**
+ * Satın alma kimliğini uygulama hesabına bağlar.
+ * Böylece satın alım cihazın anonim kimliğine değil, giriş yapan hesaba yazılır;
+ * hesap silinip yeni hesap açıldığında önceki satın alım yeni hesaba taşınmaz.
+ *
+ * Asla hata fırlatmaz — giriş/çıkış akışını bloklamamalı.
+ */
+export const identifyPurchaseUser = async (uid) => {
+  if (!USE_REVENUECAT || !Purchases || !uid) return;
+  try {
+    await Purchases.logIn(uid);
+  } catch (e) {
+    console.warn('RevenueCat logIn failed (yok sayıldı):', e?.message || e);
+  }
+};
+
+/**
+ * Çıkış / hesap silme sonrası satın alma kimliğini bırakır.
+ * Anonim kullanıcıda logOut hata verebilir; bu beklenen bir durum, yutuluyor.
+ */
+export const resetPurchaseIdentity = async () => {
+  if (!USE_REVENUECAT || !Purchases) return;
+  try {
+    await Purchases.logOut();
+  } catch (e) {
+    console.warn('RevenueCat logOut failed (yok sayıldı):', e?.message || e);
+  }
+};
+
 export const PremiumProvider = ({ children }) => {
   const [hasRomantic, setHasRomantic] = useState(false);
   const [loading, setLoading] = useState(true);

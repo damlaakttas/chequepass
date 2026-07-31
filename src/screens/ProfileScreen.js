@@ -32,10 +32,8 @@ import {
 import ScreenHeader from '../components/ScreenHeader';
 import AnimalAvatar from '../components/AnimalAvatar';
 import BottomSheet from '../components/BottomSheet';
-import PaywallSheet from '../components/PaywallSheet';
 import { COLORS, FONTS, RADIUS, SHADOW, SPACING } from '../theme/theme';
 import { useApp } from '../context/AppContext';
-import { usePremium } from '../context/PremiumContext';
 import { TERMS_TEXT, PRIVACY_TEXT } from '../config/legal';
 
 const AVATAR_OPTIONS = ['fox', 'panda', 'koala', 'bunny', 'cat', 'owl'];
@@ -45,7 +43,6 @@ const ProfileScreen = () => {
   // Romantik paket ilişkiye özel: herhangi bir ilişkide aktifse "aktif" say.
   const hasRomantic = friends.some((f) => f.romanticActive === true);
   const [avatarOpen, setAvatarOpen] = useState(false);
-  const [paywallOpen, setPaywallOpen] = useState(false);
   const [savingAvatar, setSavingAvatar] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deletePassword, setDeletePassword] = useState('');
@@ -328,11 +325,11 @@ const ProfileScreen = () => {
         </View>
       </BottomSheet>
 
-      <PaywallSheet
-        visible={paywallOpen}
-        onClose={() => setPaywallOpen(false)}
-        onSuccess={() => {}}
-      />
+      {/*
+        Profil ekranında paywall YOK. Romantik paket ilişkiye özel olduğu için
+        satın alma yalnızca hedef kişi belliyken (Kopart veya Arkadaşlar ekranı)
+        yapılabilir. Buradaki banner sadece bilgilendirme amaçlı.
+      */}
 
       {/* Yasal metinler */}
       <BottomSheet

@@ -33,6 +33,7 @@ const FriendsScreen = () => {
     acceptFriendRequest,
     rejectFriendRequest,
     updateFriendRelation,
+    activateRomanticForFriend,
   } = useApp();
 
   const route = useRoute();
@@ -44,6 +45,9 @@ const FriendsScreen = () => {
   const [sending, setSending] = useState(false);
   const [processingId, setProcessingId] = useState(null);
   const [paywallOpen, setPaywallOpen] = useState(false);
+  // Paywall hangi ilişki için açıldı? null ise sadece tanıtım gösterilir
+  // (satın alma yapılamaz — hedef ilişki belli değil).
+  const [paywallTarget, setPaywallTarget] = useState(null);
   // İlişki türü değiştirme modal'ı
   const [relationEditFriend, setRelationEditFriend] = useState(null);
 
@@ -54,15 +58,21 @@ const FriendsScreen = () => {
   }, [route.params?.initialTab]);
 
   /**
-   * "Sevgili" seçildiğinde, kullanıcı henüz premium yoksa
-   * VE bu paywall daha önce gösterilmediyse → tek kerelik tease göster.
+   * "Sevgili" seçildiğinde tek kerelik romantik paket tanıtımı.
+   *
+   * friend verilirse (mevcut bir ilişki) paywall satın alınabilir moddadır ve
+   * satın alma o ilişkiye tanımlanır. Verilmezse (henüz istek gönderilmemiş,
+   * ilişki yok) yalnızca tanıtım gösterilir — hedefi olmayan satın alma
+   * yapılamaz, aksi halde para tahsil edilip hiçbir yere tanımlanmıyordu.
    */
-  const triggerPartnerPaywall = async () => {
-    // Romantik paket artık ilişkiye özel; burada sadece tek seferlik tanıtım göster.
+  const triggerPartnerPaywall = async (friend = null) => {
+    // Zaten aktifse tanıtım göstermenin anlamı yok.
+    if (friend?.romanticActive) return;
     try {
       const teased = await AsyncStorage.getItem(PAYWALL_TEASED_KEY);
       if (teased === 'true') return; // bir kere gösterildi
       await AsyncStorage.setItem(PAYWALL_TEASED_KEY, 'true');
+      setPaywallTarget(friend);
       setPaywallOpen(true);
     } catch (e) {
       console.warn('Paywall tease check failed', e);
@@ -412,8 +422,9 @@ const FriendsScreen = () => {
                   if (sending) return;
                   setNewRelation(key);
                   if (key === 'partner') {
-                    // Sevgili seçildi → paywall tease (tek seferlik)
-                    triggerPartnerPaywall();
+                    // Sevgili seçildi → tek seferlik tanıtım.
+                    // Henüz ilişki kurulmadığı için hedef yok: sadece bilgi modu.
+                    triggerPartnerPaywall(null);
                   }
                 }}
                 disabled={sending}
@@ -467,10 +478,12 @@ const FriendsScreen = () => {
                         setRelationEditFriend(null);
                         return;
                       }
+                      const target = relationEditFriend;
                       try {
-                        await updateFriendRelation(relationEditFriend.id, key);
+                        await updateFriendRelation(target.id, key);
                         setRelationEditFriend(null);
-                        if (key === 'partner') triggerPartnerPaywall();
+                        // Mevcut ilişki → satın alma bu ilişkiye tanımlanabilir.
+                        if (key === 'partner') triggerPartnerPaywall(target);
                       } catch (e) {
                         Alert.alert('Hata', e.message);
                       }
@@ -490,8 +503,16 @@ const FriendsScreen = () => {
 
       <PaywallSheet
         visible={paywallOpen}
-        onClose={() => setPaywallOpen(false)}
-        onSuccess={() => {}}
+        onClose={() => {
+          setPaywallOpen(false);
+          setPaywallTarget(null);
+        }}
+        targetFriend={paywallTarget}
+        onSuccess={async () => {
+          // Satın alma başarılı → paket SADECE bu ilişkiye tanımlanır.
+          if (!paywallTarget?.id) throw new Error('İlişki bulunamadı');
+          await activateRomanticForFriend(paywallTarget.id);
+        }}
       />
     </SafeAreaView>
   );

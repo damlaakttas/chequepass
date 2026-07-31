@@ -37,6 +37,7 @@ import {
   writeBatch,
 } from 'firebase/firestore';
 import { auth, db } from '../config/firebase';
+import { identifyPurchaseUser, resetPurchaseIdentity } from './PremiumContext';
 import {
   writeUserAndUsername,
   checkUsernameAvailable,
@@ -55,6 +56,19 @@ const ONBOARDED_KEY = '@chequepass_onboarded_v1';
 const READ_KEY = '@chequepass_read_v1';            // { [notifId]: true }
 const PASS_EVENTS_KEY = '@chequepass_pass_events_v1'; // [{ id, title, ts }]
 const LAST_PASS_RESET_KEY = '@chequepass_last_pass_reset_v1';
+const PAYWALL_TEASED_KEY = '@chequepass_paywall_teased_v1';
+const PREMIUM_KEY = '@chequepass_premium_v1'; // yerel romantik izi (mock/fallback)
+
+// Hesap silme / çıkış sonrası temizlenecek cihaz-yerel anahtarlar.
+// ONBOARDED_KEY bilerek DIŞARIDA: onboarding tanıtımı hesaba değil cihaza ait.
+const ACCOUNT_SCOPED_KEYS = [
+  STORAGE_KEY,
+  READ_KEY,
+  PASS_EVENTS_KEY,
+  LAST_PASS_RESET_KEY,
+  PAYWALL_TEASED_KEY,
+  PREMIUM_KEY,
+];
 
 const PASS_EVENTS_MAX = 50;
 const PASS_RESET_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 saat
@@ -79,6 +93,9 @@ const seedState = () => ({
     { id: 'five_cheques', title: 'Koleksiyoncu', description: '5 çek topladın', unlocked: false },
     { id: 'first_friend', title: 'Sosyal Kelebek', description: 'İlk arkadaşını ekledin', unlocked: false },
   ],
+  // Başarılar HANGİ hesaba ait? Farklı bir uid giriş yaparsa (ör. hesap silinip
+  // yenisi açıldıysa) başarılar sıfırlanır; aynı uid'de cihaz yeniden açılınca korunur.
+  achievementsUid: null,
   // Kart desteleri Firestore'dan gelir; boş başlar.
   // decks.friend, decks.partner, decks.romantic
   decks: { friend: [], partner: [], romantic: [] },
@@ -214,6 +231,10 @@ export const AppProvider = ({ children }) => {
           const profileSnap = await getDoc(doc(db, 'users', currentUser.uid));
           if (profileSnap.exists()) {
             const profile = profileSnap.data();
+
+            // Satın alma kimliğini bu hesaba bağla (hata fırlatmaz).
+            identifyPurchaseUser(currentUser.uid);
+
             setState((prev) => ({
               ...prev,
               user: {
@@ -248,6 +269,28 @@ export const AppProvider = ({ children }) => {
 
     return () => unsubscribe();
   }, []);
+
+  // ---- Başarı sahipliği ----
+  //
+  // Başarılar cihazda tutuluyor ama HESABA ait. Cihazdaki kayıt başka bir
+  // kullanıcıya aitse (hesap silinip yenisi açıldı, ya da başka hesapla giriş
+  // yapıldı) sıfırlanır; Firestore'dan türetilenler dinleyiciler tarafından
+  // yeniden hesaplanır.
+  //
+  // `hydrated` beklenmesi önemli: hydrate ile auth listener'ın hangisinin önce
+  // biteceği garanti değil, bu effect ikisi de tamamlandığında doğru kararı verir.
+  useEffect(() => {
+    if (!hydrated) return;
+    const uid = state.user?.uid;
+    if (!uid) return;
+    if (state.achievementsUid === uid) return;
+    setState((prev) => ({
+      ...prev,
+      achievements: seedState().achievements,
+      achievementsUid: uid,
+      passEvents: [],
+    }));
+  }, [hydrated, state.user?.uid, state.achievementsUid]);
 
   // ---- Friendships real-time dinleyicisi ----
   useEffect(() => {
@@ -498,12 +541,18 @@ export const AppProvider = ({ children }) => {
     } catch (e) {
       console.warn('Sign out failed', e);
     }
+    // Satın alma kimliğini bırak; bir sonraki giriş kendi hesabına bağlanır.
+    resetPurchaseIdentity();
     setState((prev) => ({
       ...seedState(),
       isOnboarded: prev.isOnboarded,
       readMap: prev.readMap,
       passEvents: prev.passEvents,
       freePassUsed: prev.freePassUsed,
+      // Başarılar hesaba bağlı: aynı hesap tekrar girerse korunur,
+      // başka hesap girerse auth listener'da sıfırlanır.
+      achievements: prev.achievements,
+      achievementsUid: prev.achievementsUid,
     }));
   }, []);
 
@@ -577,21 +626,44 @@ export const AppProvider = ({ children }) => {
     // 3) Auth hesabını sil
     await deleteUser(currentUser);
 
-    // 4) Local temizlik (auth listener da tetiklenir)
-    // STORAGE_KEY dahil hepsini temizle ki başarılar (achievements) ve
-    // yerel premium izi bir sonraki hesaba taşınmasın.
+    // 4) Local temizlik.
+    //
+    // ROMANTİK PAKET: friendships dokümanları yukarıda silindiği için
+    // `romantic.active` bilgisi de gitti — paket her iki kullanıcı için de
+    // kapanır. Yeni bir hesap açılıp aynı kişi tekrar eklense bile yeni
+    // friendship dokümanında romantik alanı olmadığından aktif olmaz.
+    //
+    // BAŞARILAR: önce state'i seed'liyoruz ki persist effect'i temiz veriyle
+    // çalışsın, sonra cihaz-yerel anahtarları siliyoruz, en son da temiz
+    // snapshot'ı açıkça yazıyoruz. Bu sıra, arada tetiklenen auth listener'ın
+    // eski başarıları geri yazma ihtimalini ortadan kaldırır.
+    const cleanState = { ...seedState(), isOnboarded: state.isOnboarded };
+    setState(cleanState);
+
     try {
-      await AsyncStorage.multiRemove([
-        STORAGE_KEY,
-        READ_KEY,
-        PASS_EVENTS_KEY,
-        LAST_PASS_RESET_KEY,
-        '@chequepass_premium_v1', // yerel romantik izi (mock/fallback)
-      ]);
+      await AsyncStorage.multiRemove(ACCOUNT_SCOPED_KEYS);
+    } catch (e) {
+      console.warn('Yerel temizlik kısmen başarısız:', e);
+    }
+
+    // Persist effect'i araya girmiş olabilir; temiz snapshot'ı son söz olarak yaz.
+    try {
+      const {
+        user: _u,
+        friends: _f,
+        friendRequests: _fr,
+        cheques: _c,
+        passEvents: _pe,
+        readMap: _rm,
+        isOnboarded: _io,
+        ...persistable
+      } = cleanState;
+      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(persistable));
     } catch (e) {}
-    // Achievements dahil tüm state sıfırdan seed'lenir (başarılar kilitli döner).
-    setState((prev) => ({ ...seedState(), isOnboarded: prev.isOnboarded }));
-  }, []);
+
+    // Satın alma kimliğini bırak: silinen hesabın satın alımı yeni hesaba taşınmasın.
+    resetPurchaseIdentity();
+  }, [state.isOnboarded]);
 
   const resetPassword = useCallback(async (email) => {
     if (!email) throw new Error('E-posta gerekli');

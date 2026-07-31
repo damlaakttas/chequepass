@@ -471,14 +471,11 @@ const HomeScreen = ({ navigation }) => {
       <PaywallSheet
         visible={paywallOpen}
         onClose={() => setPaywallOpen(false)}
+        targetFriend={activeFriend}
         onSuccess={async () => {
           // Satın alma başarılı → romantik paketi AKTİF İLİŞKİYE bağla.
-          try {
-            await activateRomanticForFriend(activeFriend?.id);
-          } catch (e) {
-            Alert.alert('Hata', e.message || 'Romantik paket etkinleştirilemedi');
-            return;
-          }
+          // Hata fırlatırsa PaywallSheet kullanıcıyı uyarır ve modalı kapatmaz.
+          await activateRomanticForFriend(activeFriend?.id);
           // Varyant değişimi effect'i tetikler; renk/faz orada sıfırlanır.
           setSelectedDeckVariant('romantic');
         }}

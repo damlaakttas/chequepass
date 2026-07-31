@@ -1,17 +1,16 @@
 // src/components/PaywallSheet.js
 //
-// Premium satın alma modalı. Üç tetikleyiciden açılır:
-// 1. FriendsScreen "Sevgili" seçildiğinde
-// 2. ProfileScreen banner
-// 3. HomeScreen kilitli ikon
+// Romantik paket satın alma modalı.
 //
-// İçerik:
-// - Üstte 3 kart yelpazesi, blur'lu, asma kilit
-// - Başlık + alt başlık
-// - 3 özellik (yeşil tikli)
-// - Fiyat (çizili indirim) + büyük gradient buton
-// - "Tek seferlik ödeme" notu
-// - "Satın alımı geri yükle" linki
+// ÖNEMLİ — İLİŞKİYE ÖZEL MODEL:
+// Romantik paket cihaza/hesaba değil, İKİ KİŞİ ARASINDAKİ İLİŞKİYE tanımlanır.
+// Bu yüzden satın alma yalnızca hedef ilişki belliyken (targetFriend) yapılabilir.
+// targetFriend verilmezse modal "tanıtım modunda" açılır; satın alma butonu
+// yerine kullanıcıyı Kopart ekranına yönlendiren bir bilgi gösterilir.
+// (Aksi halde para tahsil edilip hiçbir ilişkiye paket tanımlanmıyordu.)
+//
+// "Satın alımı geri yükle" butonu bilerek YOK: ürün ilişki başına satılıyor,
+// geri yükleme başka bir ilişkide bedava aktivasyona yol açıyordu.
 
 import React from 'react';
 import {
@@ -27,7 +26,7 @@ import {
   Alert,
 } from 'react-native';
 import { BlurView } from 'expo-blur';
-import { X, Check, Lock, Sparkles } from 'lucide-react-native';
+import { X, Check, Lock, Sparkles, Heart } from 'lucide-react-native';
 import ConfettiCannon from 'react-native-confetti-cannon';
 import { COLORS, FONTS, RADIUS, SHADOW, SPACING } from '../theme/theme';
 import { usePremium, ROMANTIC_PRODUCT_ID } from '../context/PremiumContext';
@@ -45,11 +44,13 @@ const FEATURES = [
   'Gizem ve Tutku: Kopart butonuna bas, geceyi şansa bırak.',
 ];
 
-const PaywallSheet = ({ visible, onClose, onSuccess }) => {
-  const { purchaseRomantic, restorePurchases, purchasing, isMock, offerings } = usePremium();
+const PaywallSheet = ({ visible, onClose, onSuccess, targetFriend = null }) => {
+  const { purchaseRomantic, purchasing, isMock, offerings } = usePremium();
   const [showConfetti, setShowConfetti] = useState(false);
-  const [restoring, setRestoring] = useState(false);
   const confettiRef = useRef(null);
+
+  // Hedef ilişki yoksa satın alma yapılamaz (bkz. dosya başındaki not).
+  const canPurchase = !!targetFriend?.id;
 
   // Gerçek StoreKit fiyatı (yerelleştirilmiş). Apple, vitrindeki gerçek
   // fiyattan farklı hard-coded fiyat gösterimini reddedebilir.
@@ -59,31 +60,34 @@ const PaywallSheet = ({ visible, onClose, onSuccess }) => {
   const priceString = romanticPkg?.product?.priceString || null;
 
   const handlePurchase = async () => {
+    if (!canPurchase) return;
     const result = await purchaseRomantic();
-    if (result.success) {
-      setShowConfetti(true);
-      setTimeout(() => {
-        setShowConfetti(false);
-        onSuccess && onSuccess();
-        onClose && onClose();
-      }, 1800);
-    } else if (!result.cancelled) {
-      Alert.alert('Hata', result.error || 'Satın alma tamamlanamadı.');
+    if (!result.success) {
+      if (!result.cancelled) {
+        Alert.alert('Hata', result.error || 'Satın alma tamamlanamadı.');
+      }
+      return;
     }
-  };
 
-  const handleRestore = async () => {
-    if (restoring) return;
-    setRestoring(true);
-    const result = await restorePurchases();
-    setRestoring(false);
-    if (result.success) {
-      Alert.alert('Geri yüklendi', 'Romantik paket hesabınıza tanımlandı.');
-      onSuccess && onSuccess();
-      onClose && onClose();
-    } else {
-      Alert.alert('Bilgi', 'Geri yüklenecek satın alım bulunamadı.');
+    // Ödeme alındı. Aktivasyon BAŞARILI olmadan modalı kapatma —
+    // aksi halde para gider, paket açılmaz.
+    try {
+      if (onSuccess) await onSuccess();
+    } catch (e) {
+      Alert.alert(
+        'Paket etkinleştirilemedi',
+        (e?.message || 'Bilinmeyen hata') +
+          '\n\nÖdemen alındı. İnternet bağlantını kontrol edip tekrar dene; ' +
+          'sorun sürerse bizimle iletişime geç.'
+      );
+      return;
     }
+
+    setShowConfetti(true);
+    setTimeout(() => {
+      setShowConfetti(false);
+      onClose && onClose();
+    }, 1800);
   };
 
   return (
@@ -131,6 +135,14 @@ const PaywallSheet = ({ visible, onClose, onSuccess }) => {
               <Text style={styles.subtitle}>
                 İlişkinizin ateşini yükseltecek, sadece çiftlere özel hazırlanmış cesur iddialar ve görevler.
               </Text>
+              {canPurchase && (
+                <View style={styles.targetPill}>
+                  <Heart size={13} color="#dc2626" fill="#dc2626" />
+                  <Text style={styles.targetPillText}>
+                    @{targetFriend.username} ile aranızda aktif olacak
+                  </Text>
+                </View>
+              )}
             </View>
 
             <View style={styles.features}>
@@ -155,31 +167,45 @@ const PaywallSheet = ({ visible, onClose, onSuccess }) => {
 
           {/* Sticky footer */}
           <View style={styles.footer}>
-            <TouchableOpacity
-              style={[styles.ctaBtn, purchasing && { opacity: 0.6 }]}
-              onPress={handlePurchase}
-              disabled={purchasing}
-              activeOpacity={0.85}
-            >
-              {purchasing ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <>
-                  <Text style={styles.ctaText}>
-                    {priceString ? `${priceString} ile Kilidi Aç` : 'Kilidi Aç'}
-                  </Text>
-                  <Sparkles size={18} color="#fff" />
-                </>
-              )}
-            </TouchableOpacity>
-            <Text style={styles.guaranteeText}>
-              Tek seferlik ödemedir. Abonelik gerektirmez.
-            </Text>
-            <TouchableOpacity onPress={handleRestore} hitSlop={6}>
-              <Text style={styles.restoreText}>
-                {restoring ? 'Yükleniyor...' : 'Satın alımı geri yükle'}
-              </Text>
-            </TouchableOpacity>
+            {canPurchase ? (
+              <>
+                <TouchableOpacity
+                  style={[styles.ctaBtn, purchasing && { opacity: 0.6 }]}
+                  onPress={handlePurchase}
+                  disabled={purchasing}
+                  activeOpacity={0.85}
+                >
+                  {purchasing ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <>
+                      <Text style={styles.ctaText}>
+                        {priceString ? `${priceString} ile Kilidi Aç` : 'Kilidi Aç'}
+                      </Text>
+                      <Sparkles size={18} color="#fff" />
+                    </>
+                  )}
+                </TouchableOpacity>
+                <Text style={styles.guaranteeText}>
+                  Tek seferlik ödemedir. Abonelik gerektirmez. Paket, @
+                  {targetFriend.username} ile aranızda geçerlidir; her ilişki için ayrı alınır.
+                </Text>
+              </>
+            ) : (
+              <>
+                <TouchableOpacity
+                  style={styles.ctaBtn}
+                  onPress={onClose}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.ctaText}>Anladım</Text>
+                </TouchableOpacity>
+                <Text style={styles.guaranteeText}>
+                  Romantik paket kişiye özeldir. Kopart ekranında ilgili kişiyi seçip
+                  "Romantik Paket"e dokunarak o ilişki için satın alabilirsin.
+                </Text>
+              </>
+            )}
           </View>
 
           {showConfetti && (
@@ -346,12 +372,23 @@ const styles = StyleSheet.create({
     marginTop: 8,
     textAlign: 'center',
   },
-  restoreText: {
-    fontFamily: FONTS.medium,
+  targetPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'center',
+    gap: 6,
+    marginTop: SPACING.md,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: RADIUS.pill,
+    backgroundColor: '#fee2e2',
+    borderWidth: 1,
+    borderColor: '#fecaca',
+  },
+  targetPillText: {
+    fontFamily: FONTS.semiBold,
     fontSize: 12,
-    color: COLORS.textMuted,
-    textDecorationLine: 'underline',
-    marginTop: 6,
+    color: '#9f1239',
   },
 });
 
