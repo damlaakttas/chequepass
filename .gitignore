@@ -8,3 +8,11 @@ web-build/
 .env
 .env.local
 service-account.json
+
+# Yerel build ciktilari (eas build --local)
+*.ipa
+*.aab
+*.apk
+*.tar.gz
+ios/
+android/
