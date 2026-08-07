@@ -151,12 +151,12 @@ const ProfileScreen = () => {
           <View style={[styles.statCard, { backgroundColor: COLORS.primary }]}>
             <Gift size={18} color={COLORS.text} />
             <Text style={styles.statValue}>{stats.won}</Text>
-            <Text style={styles.statLabel}>Sana Ait</Text>
+            <Text style={styles.statLabel}>Gelen Çeklerim</Text>
           </View>
           <View style={[styles.statCard, { backgroundColor: COLORS.secondary }]}>
             <Send size={18} color={COLORS.text} />
             <Text style={styles.statValue}>{stats.gifted}</Text>
-            <Text style={styles.statLabel}>Hediye Ettin</Text>
+            <Text style={styles.statLabel}>Giden Çeklerim</Text>
           </View>
           <View style={[styles.statCard, { backgroundColor: '#fff' }]}>
             <Users size={18} color={COLORS.text} />

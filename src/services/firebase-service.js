@@ -8,8 +8,15 @@ import {
   collection,
   updateDoc,
   runTransaction,
+  Timestamp,
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
+import { expiryDaysFor, expiryMillisFor } from '../config/cheques';
+
+// Doğrulanmamış kayıtların kullanıcı adını ne kadar süre tuttuğu.
+// Bu süre dolduktan sonra ad başkası tarafından devralınabilir.
+// Aynı değer firestore.rules ve functions/index.js içinde de kullanılıyor.
+export const USERNAME_RESERVATION_TTL_MS = 30 * 60 * 1000; // 30 dakika
 
 // ---- Username validation ----------------------------------------------------
 
@@ -41,11 +48,35 @@ export const checkUsernameAvailable = async (username) => {
   const usernameLower = username.toLowerCase();
   try {
     const snap = await getDoc(doc(db, 'usernames', usernameLower));
-    return snap.exists() ? 'taken' : 'available';
+    if (!snap.exists()) return 'available';
+    // Doğrulanmamış ve süresi dolmuş rezervasyon → ad yeniden alınabilir.
+    return isExpiredReservation(snap.data()) ? 'available' : 'taken';
   } catch (e) {
     console.warn('checkUsernameAvailable soft-check failed:', e.code, e.message);
     return 'unknown';
   }
+};
+
+/**
+ * Bir usernames dokümanı "süresi dolmuş, doğrulanmamış rezervasyon" mu?
+ *
+ * - verified === true  → gerçek hesap, asla devralınamaz.
+ * - claimedAt yok      → bu özellikten ÖNCE oluşmuş eski kayıt; dokunma.
+ * - claimedAt eski     → e-postası doğrulanmamış, terk edilmiş kayıt; devralınabilir.
+ */
+const isExpiredReservation = (data, now = Date.now()) => {
+  if (!data) return false;
+  if (data.verified === true) return false;
+  const claimedAt = data.claimedAt;
+  if (!claimedAt) return false;
+  const millis =
+    typeof claimedAt.toMillis === 'function'
+      ? claimedAt.toMillis()
+      : claimedAt.seconds
+        ? claimedAt.seconds * 1000
+        : null;
+  if (!millis) return false;
+  return now - millis > USERNAME_RESERVATION_TTL_MS;
 };
 
 // ---- User profile helpers ---------------------------------------------------
@@ -70,14 +101,15 @@ export const writeUserAndUsername = async ({ uid, username, email, avatar }) => 
   try {
     await runTransaction(db, async (tx) => {
       const existing = await tx.get(usernameRef);
-      let needUsernameDoc = true;
+
       if (existing.exists()) {
-        // Başkası almışsa hata; aynı kullanıcının tekrar denemesiyse
-        // username doc'una dokunma (rules 'update: if false').
-        if (existing.data()?.uid !== uid) {
+        const data = existing.data();
+        const isMine = data?.uid === uid;
+        // Başkasının adı: yalnızca doğrulanmamış + süresi dolmuş bir
+        // rezervasyonsa devralınabilir. Gerçek hesaplara dokunulmaz.
+        if (!isMine && !isExpiredReservation(data)) {
           throw new UsernameTakenError();
         }
-        needUsernameDoc = false;
       }
 
       tx.set(userRef, {
@@ -86,17 +118,22 @@ export const writeUserAndUsername = async ({ uid, username, email, avatar }) => 
         usernameLower,
         email: email.toLowerCase(),
         avatar,
+        // E-posta doğrulanana kadar hesap "beklemede" sayılır.
+        emailVerified: false,
         createdAt: serverTimestamp(),
       });
 
-      if (needUsernameDoc) {
-        tx.set(usernameRef, {
-          uid,
-          username,
-          usernameLower,
-          createdAt: serverTimestamp(),
-        });
-      }
+      // Kullanıcı adı kaydı DOĞRULANMAMIŞ rezervasyon olarak yazılır.
+      // verified=true, kullanıcı e-postasını onaylayıp ilk girişini
+      // yaptığında markUsernameVerified() ile işaretlenir.
+      tx.set(usernameRef, {
+        uid,
+        username,
+        usernameLower,
+        verified: false,
+        claimedAt: serverTimestamp(),
+        createdAt: serverTimestamp(),
+      });
     });
   } catch (e) {
     if (e instanceof UsernameTakenError || e.code === 'username-taken') {
@@ -105,6 +142,50 @@ export const writeUserAndUsername = async ({ uid, username, email, avatar }) => 
     console.error('writeUserAndUsername failed:', e.code, e.message);
     throw new Error('Profil kaydedilemedi: ' + (e.message || 'bilinmeyen hata'));
   }
+};
+
+/**
+ * E-posta doğrulandıktan sonraki İLK girişte çağrılır.
+ * Kullanıcı adı rezervasyonunu kalıcı hale getirir (verified=true) ve
+ * profildeki emailVerified bayrağını günceller.
+ *
+ * Hata fırlatmaz: giriş akışını bloklamamalı. Başarısız olursa bir sonraki
+ * girişte tekrar denenir.
+ */
+export const markUsernameVerified = async ({ uid, username }) => {
+  if (!uid || !username) return { ok: false };
+  const usernameLower = String(username).toLowerCase();
+
+  // Rezervasyon süresi kısa olduğu için, doğrulama tamamlanana kadar
+  // ad başkası tarafından devralınmış olabilir. Önce sahipliği kontrol et.
+  try {
+    const snap = await getDoc(doc(db, 'usernames', usernameLower));
+    if (snap.exists() && snap.data()?.uid !== uid) {
+      // Ad artık bizim değil. Çağıran taraf bu durumu ele alır.
+      return { ok: false, lost: true };
+    }
+  } catch (e) {
+    // Okuma başarısızsa hiçbir şey varsayma; bir sonraki girişte tekrar denenir.
+    console.warn('markUsernameVerified ownership check failed:', e.code, e.message);
+    return { ok: false };
+  }
+
+  try {
+    await setDoc(
+      doc(db, 'usernames', usernameLower),
+      { uid, username, usernameLower, verified: true },
+      { merge: true }
+    );
+  } catch (e) {
+    console.warn('markUsernameVerified (usernames) failed:', e.code, e.message);
+    return { ok: false };
+  }
+  try {
+    await setDoc(doc(db, 'users', uid), { emailVerified: true }, { merge: true });
+  } catch (e) {
+    console.warn('markUsernameVerified (users) failed:', e.code, e.message);
+  }
+  return { ok: true };
 };
 
 export const findUserByUsername = async (username) => {
@@ -211,6 +292,12 @@ export const createCheque = async ({
   deckVariant = 'normal',
 }) => {
   const ref = doc(collection(db, 'cheques'));
+
+  // Geçerlilik süresi çekin kopartıldığı anda sabitlenir:
+  // normal deste 3 gün, romantik deste 6 gün.
+  // Cloud Function `expiresAt` alanına bakarak 12 saat kala hatırlatma yollar.
+  const expiresAtMillis = expiryMillisFor(deckVariant);
+
   await setDoc(ref, {
     friendshipId,
     participants,
@@ -225,6 +312,8 @@ export const createCheque = async ({
     deckVariant, // 'normal' | 'romantic' — Çeklerim'de kalpli tema için
     status: 'active',
     createdAt: serverTimestamp(),
+    expiresAt: Timestamp.fromMillis(expiresAtMillis),
+    expiryDays: expiryDaysFor(deckVariant),
   });
   return ref.id;
 };

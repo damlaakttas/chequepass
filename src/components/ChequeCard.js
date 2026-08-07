@@ -20,6 +20,7 @@ import Animated, {
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { Gift, Download, SkipForward } from 'lucide-react-native';
 import { COLORS, FONTS, RADIUS, SHADOW, SPACING } from '../theme/theme';
+import { expiryDaysFor } from '../config/cheques';
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 export const CARD_W = Math.min(SCREEN_W - 48, 340);
@@ -27,9 +28,12 @@ export const CARD_H = Math.min(SCREEN_H * 0.55, 480);
 
 const SWIPE_THRESHOLD = 110;
 
-const ChequeCard = ({ template, onResolve, friendName }) => {
+const ChequeCard = ({ template, onResolve, friendName, deckVariant = 'normal' }) => {
   const translateX = useSharedValue(0);
   const translateY = useSharedValue(0);
+
+  // Kart üstünde gösterilen geçerlilik: normal 3 gün, romantik 6 gün.
+  const validityLabel = `${expiryDaysFor(deckVariant)} gün`;
 
   const resolve = (direction) => {
     onResolve(direction);
@@ -158,7 +162,7 @@ const ChequeCard = ({ template, onResolve, friendName }) => {
             </View>
             <View style={{ alignItems: 'flex-end' }}>
               <Text style={styles.cardLabel}>GEÇERLİLİK</Text>
-              <Text style={styles.cardValue}>Süresiz</Text>
+              <Text style={styles.cardValue}>{validityLabel}</Text>
             </View>
           </View>
         </Animated.View>

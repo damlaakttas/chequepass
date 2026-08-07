@@ -19,7 +19,7 @@ import AppLogo from '../components/AppLogo';
 import BottomSheet from '../components/BottomSheet';
 import { COLORS, FONTS, RADIUS, SHADOW, SPACING } from '../theme/theme';
 import { useApp } from '../context/AppContext';
-import { validateEmail } from '../utils/helpers';
+import { validateEmail, suggestEmailFix } from '../utils/helpers';
 import {
   checkUsernameAvailable,
   validateUsername,
@@ -122,6 +122,32 @@ const AuthScreen = () => {
     }
   };
 
+  /**
+   * Kayıtta e-postada olası yazım hatası varsa kullanıcıyı uyarır.
+   *
+   * Adresi BİZ DÜZELTMEYİZ — kullanıcı kendi düzeltsin. "Düzelteyim" derse
+   * kayıt iptal edilir ve alan olduğu gibi kalır; "Doğru" derse devam edilir.
+   *
+   * Dönüş: true → kayda devam et, false → iptal et.
+   */
+  const confirmEmailTypo = (value) =>
+    new Promise((resolve) => {
+      const suggestion = suggestEmailFix(value);
+      if (!suggestion) {
+        resolve(true);
+        return;
+      }
+      Alert.alert(
+        'E-postanı kontrol et',
+        `"${value.trim()}" doğru mu? "${suggestion}" yazmak istemiş olabilirsin.\n\nDoğrulama linki bu adrese gönderilecek.`,
+        [
+          { text: 'Düzelteyim', style: 'cancel', onPress: () => resolve(false) },
+          { text: 'Doğru, devam et', onPress: () => resolve(true) },
+        ],
+        { cancelable: false }
+      );
+    });
+
   const handleSubmit = async () => {
     try {
       setLoading(true);
@@ -162,10 +188,15 @@ const AuthScreen = () => {
         if (!validateEmail(email)) throw new Error('Geçerli bir e-posta gir');
         if (password.length < 6) throw new Error('Şifre en az 6 karakter olmalı');
 
+        // Yazım hatası kontrolü (gmail.con → gmail.com).
+        // Kullanıcı "Düzelteyim" derse kayıt yapılmaz, alan olduğu gibi kalır.
+        const proceed = await confirmEmailTypo(email);
+        if (!proceed) return;
+
         await signUp({ username: validation.value, email, password });
 
         Alert.alert(
-          'Hesabın oluşturuldu 🎉',
+          'Son bir adım kaldı 📩',
           `${email.trim()} adresine doğrulama linki gönderildi. Linke tıkladıktan sonra giriş yapabilirsin.`,
           [
             {

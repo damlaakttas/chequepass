@@ -7,10 +7,10 @@
 // - Sola swipe → "Sil" butonu çıkar; tıklayınca onay diyaloğu sonra siler
 // - Detayda not ve "Çeki Kullandım" sadece kullanılmamış kart için
 
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput, Alert, Keyboard } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Inbox, Gift, CheckCircle2, FileText, X, Edit3, Trash2 } from 'lucide-react-native';
+import { Inbox, Gift, CheckCircle2, FileText, X, Edit3, Trash2, Clock, TimerOff } from 'lucide-react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import ScreenHeader from '../components/ScreenHeader';
 import BottomSheet from '../components/BottomSheet';
@@ -19,6 +19,12 @@ import { COLORS, FONTS, RADIUS, SHADOW, SPACING } from '../theme/theme';
 import { ROMANTIC, ROMANTIC_VARIANT } from '../theme/romantic';
 import { useApp } from '../context/AppContext';
 import { formatDate, formatRelative } from '../utils/helpers';
+import {
+  isChequeExpired,
+  formatRemaining,
+  isExpiringSoon,
+  CHEQUE_EXPIRY_DAYS,
+} from '../config/cheques';
 
 // Üst sekmeler:
 // mine    = sahibi benim olan çekler
@@ -29,9 +35,9 @@ const TABS = [
 ];
 
 // Alt filtre chip'leri:
-// active = kullanılabilir (status !== 'used')
+// active = kullanılabilir (kullanılmamış VE süresi dolmamış)
 // used   = kullanılmış (status === 'used')
-// all    = tümü
+// all    = tümü (süresi dolanlar dahil)
 const FILTERS = [
   { key: 'active', label: 'Kullanılabilir' },
   { key: 'used', label: 'Kullanılmış' },
@@ -58,17 +64,30 @@ const ChequesScreen = () => {
   // Aktif Swipeable referansı (aynı anda birden fazla açılmasın)
   const openRowRef = useRef(null);
 
+  // Kalan süre metinleri zamanla değişsin diye dakikada bir yeniden çiz.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 60000);
+    return () => clearInterval(t);
+  }, []);
+
   const baseList = tab === 'mine' ? chequesForActiveFriend.mine : chequesForActiveFriend.theirs;
 
   const list = useMemo(() => {
-    if (filter === 'active') return baseList.filter((c) => c.status !== 'used');
+    // Süresi dolan çekler "Kullanılabilir"den çıkar ama silinmez;
+    // "Tümü" filtresinde solgun ve kullanılamaz halde görünürler.
+    if (filter === 'active') {
+      return baseList.filter((c) => c.status !== 'used' && !isChequeExpired(c, now));
+    }
     if (filter === 'used') return baseList.filter((c) => c.status === 'used');
     return baseList;
-  }, [baseList, filter]);
+  }, [baseList, filter, now]);
 
-  // Üst sekmenin badge sayıları (kullanılmamışlar)
-  const myActive = chequesForActiveFriend.mine.filter((c) => c.status !== 'used').length;
-  const theirActive = chequesForActiveFriend.theirs.filter((c) => c.status !== 'used').length;
+  // Üst sekmenin badge sayıları (gerçekten kullanılabilir olanlar)
+  const countUsable = (arr) =>
+    arr.filter((c) => c.status !== 'used' && !isChequeExpired(c, now)).length;
+  const myActive = countUsable(chequesForActiveFriend.mine);
+  const theirActive = countUsable(chequesForActiveFriend.theirs);
 
   const openDetail = (c) => {
     setSelected(c);
@@ -118,7 +137,9 @@ const ChequesScreen = () => {
   const handleDelete = (item, swipeRef) => {
     Alert.alert(
       'Çek silinsin mi?',
-      'Kullanılmış olan bu çek listeden tamamen kaldırılacak.',
+      isChequeExpired(item, now)
+        ? 'Süresi dolmuş bu çek listeden tamamen kaldırılacak.'
+        : 'Kullanılmış olan bu çek listeden tamamen kaldırılacak.',
       [
         {
           text: 'Vazgeç',
@@ -151,7 +172,7 @@ const ChequesScreen = () => {
       if (item.ownerId === myUid) {
         return `@${friendName} hediye etti`;
       }
-      return `Sen @${friendName}'e hediye ettin`;
+      return `@${friendName}'e hediye ettin`;
     }
     // keep
     if (item.ownerId === myUid) {
@@ -160,9 +181,12 @@ const ChequesScreen = () => {
     return `@${friendName} kendine aldı`;
   };
 
+  // Silinebilir: kullanılmış VEYA süresi dolmuş çekler, sadece sahibi (mine).
+  const canDeleteCheque = (item) =>
+    tab === 'mine' && (item.status === 'used' || isChequeExpired(item, now));
+
   const renderRightActions = (item, swipeRef) => () => {
-    // Sadece kullanılmış çek silinebilir + sadece sahibi (mine sekmesi)
-    if (item.status !== 'used' || tab !== 'mine') return null;
+    if (!canDeleteCheque(item)) return null;
     return (
       <View style={styles.deleteWrap}>
         <TouchableOpacity
@@ -182,11 +206,15 @@ const ChequesScreen = () => {
     const swipeRef = useRef(null);
 
     const isRomantic = item.deckVariant === ROMANTIC_VARIANT;
+    const expired = isChequeExpired(item, now);
+    const remaining = item.status === 'used' ? null : formatRemaining(item.expiresAtMillis, now);
+    const soon = !expired && isExpiringSoon(item.expiresAtMillis, now);
+
     const card = (
       <TouchableOpacity
         style={[
           styles.row,
-          item.status === 'used' && styles.rowUsed,
+          (item.status === 'used' || expired) && styles.rowUsed,
           isRomantic && styles.rowRomantic,
         ]}
         onPress={() => openDetail(item)}
@@ -196,16 +224,33 @@ const ChequesScreen = () => {
         {isRomantic && <HeartsBackground variant="row" color={ROMANTIC.heart} />}
         <View style={[styles.colorStrip, { backgroundColor: item.color }]} />
         <View style={{ flex: 1 }}>
+          {/* Durum rozeti hep aynı yerde: başlığın sağında.
+              Kullanıldı / Süresi doldu / kalan süre — üçü de burada. */}
           <View style={styles.rowTop}>
-            <Text style={[styles.rowTitle, isRomantic && styles.rowTitleRomantic]}>
+            <Text
+              style={[styles.rowTitle, isRomantic && styles.rowTitleRomantic]}
+              numberOfLines={1}
+            >
               {item.title}
             </Text>
-            {item.status === 'used' && (
+            {item.status === 'used' ? (
               <View style={styles.usedBadge}>
                 <CheckCircle2 size={12} color={COLORS.textMuted} />
                 <Text style={styles.usedText}>Kullanıldı</Text>
               </View>
-            )}
+            ) : expired ? (
+              <View style={styles.expiredBadge}>
+                <TimerOff size={12} color="#b91c1c" />
+                <Text style={styles.expiredText}>Süresi doldu</Text>
+              </View>
+            ) : remaining ? (
+              <View style={[styles.remainingBadge, soon && styles.remainingBadgeSoon]}>
+                <Clock size={11} color={soon ? '#b91c1c' : COLORS.textMuted} />
+                <Text style={[styles.remainingText, soon && styles.remainingTextSoon]}>
+                  {remaining}
+                </Text>
+              </View>
+            ) : null}
           </View>
           <Text style={styles.rowSub} numberOfLines={1}>
             {item.reason ? `"${item.reason}"` : item.subtitle}
@@ -213,14 +258,15 @@ const ChequesScreen = () => {
           <View style={styles.rowMeta}>
             <Text style={styles.metaText}>{formatRelative(item.createdAtMillis)}</Text>
             <Text style={styles.metaDot}>•</Text>
-            <Text style={styles.metaText}>{getOriginLabel(item)}</Text>
+            <Text style={styles.metaText} numberOfLines={1}>
+              {getOriginLabel(item)}
+            </Text>
           </View>
         </View>
       </TouchableOpacity>
     );
 
-    const canDelete = item.status === 'used' && tab === 'mine';
-    if (!canDelete) return card;
+    if (!canDeleteCheque(item)) return card;
 
     return (
       <Swipeable
@@ -314,6 +360,13 @@ const ChequesScreen = () => {
               ? 'Sana ait çekler burada görünecek.'
               : `@${activeFriend.username}'in çekleri burada görünecek.`}
           </Text>
+          {filter === 'active' && (
+            <Text style={styles.emptyHint}>
+              Çekler süreli: normal çekler {CHEQUE_EXPIRY_DAYS.normal} gün, romantik çekler{' '}
+              {CHEQUE_EXPIRY_DAYS.romantic} gün geçerli. Süresi dolanları "Tümü" sekmesinde
+              görebilirsin.
+            </Text>
+          )}
         </View>
       ) : (
         <FlatList
@@ -361,6 +414,34 @@ const ChequesScreen = () => {
                 <Text style={styles.metaCellValue}>{formatDate(selected.createdAtMillis)}</Text>
               </View>
             </View>
+
+            {/* Geçerlilik: expiresAt'i olmayan eski çeklerde hiç gösterilmez. */}
+            {selected.status !== 'used' && selected.expiresAtMillis && (
+              <View
+                style={[
+                  styles.usedRow,
+                  isChequeExpired(selected, now) ? styles.expiredRow : styles.validRow,
+                ]}
+              >
+                {isChequeExpired(selected, now) ? (
+                  <TimerOff size={14} color="#b91c1c" />
+                ) : (
+                  <Clock size={14} color={COLORS.textMuted} />
+                )}
+                <Text
+                  style={[
+                    styles.usedRowText,
+                    isChequeExpired(selected, now) && styles.expiredRowText,
+                  ]}
+                >
+                  {isChequeExpired(selected, now)
+                    ? `Süresi ${formatDate(selected.expiresAtMillis)} tarihinde doldu`
+                    : `${formatRemaining(selected.expiresAtMillis, now)} · son gün ${formatDate(
+                        selected.expiresAtMillis
+                      )}`}
+                </Text>
+              </View>
+            )}
 
             {selected.status === 'used' && selected.usedAtMillis && (
               <View style={styles.usedRow}>
@@ -421,23 +502,28 @@ const ChequesScreen = () => {
                 </>
               ) : (
                 <>
-                  {tab === 'mine' && selected.status !== 'used' && (
-                    <TouchableOpacity style={styles.ghostBtn} onPress={() => setEditing(true)}>
-                      <Edit3 size={16} color={COLORS.text} />
-                      <Text style={styles.ghostBtnText}>
-                        {selected.reason ? 'Düzenle' : 'Not ekle'}
-                      </Text>
-                    </TouchableOpacity>
-                  )}
-                  {tab === 'mine' && selected.status !== 'used' && (
-                    <TouchableOpacity
-                      style={[styles.primaryBtn, { flex: 1 }]}
-                      onPress={markUsed}
-                    >
-                      <CheckCircle2 size={16} color="#fff" />
-                      <Text style={styles.primaryBtnText}>Çeki Kullandım</Text>
-                    </TouchableOpacity>
-                  )}
+                  {/* Süresi dolan çekte not düzenleme ve kullanım kapalı. */}
+                  {tab === 'mine' &&
+                    selected.status !== 'used' &&
+                    !isChequeExpired(selected, now) && (
+                      <TouchableOpacity style={styles.ghostBtn} onPress={() => setEditing(true)}>
+                        <Edit3 size={16} color={COLORS.text} />
+                        <Text style={styles.ghostBtnText}>
+                          {selected.reason ? 'Düzenle' : 'Not ekle'}
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+                  {tab === 'mine' &&
+                    selected.status !== 'used' &&
+                    !isChequeExpired(selected, now) && (
+                      <TouchableOpacity
+                        style={[styles.primaryBtn, { flex: 1 }]}
+                        onPress={markUsed}
+                      >
+                        <CheckCircle2 size={16} color="#fff" />
+                        <Text style={styles.primaryBtnText}>Çeki Kullandım</Text>
+                      </TouchableOpacity>
+                    )}
                 </>
               )}
             </View>
@@ -530,10 +616,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    gap: 8,
     paddingHorizontal: 14,
     paddingTop: 12,
   },
-  rowTitle: { fontFamily: FONTS.semiBold, fontSize: 15, color: COLORS.text, flex: 1 },
+  rowTitle: {
+    fontFamily: FONTS.semiBold,
+    fontSize: 15,
+    color: COLORS.text,
+    flex: 1,
+    flexShrink: 1,
+  },
   usedBadge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -544,6 +637,33 @@ const styles = StyleSheet.create({
     borderRadius: RADIUS.pill,
   },
   usedText: { fontFamily: FONTS.medium, fontSize: 10, color: COLORS.textMuted },
+  expiredBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#fee2e2',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: RADIUS.pill,
+  },
+  expiredText: { fontFamily: FONTS.semiBold, fontSize: 10, color: '#b91c1c' },
+  remainingBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: COLORS.background,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: RADIUS.pill,
+  },
+  remainingBadgeSoon: { backgroundColor: '#fee2e2' },
+  remainingText: { fontFamily: FONTS.medium, fontSize: 10, color: COLORS.textMuted },
+  remainingTextSoon: { color: '#b91c1c', fontFamily: FONTS.semiBold },
+  validRow: {},
+  expiredRow: {
+    backgroundColor: '#fee2e2',
+  },
+  expiredRowText: { color: '#b91c1c', fontFamily: FONTS.semiBold },
   rowSub: {
     fontFamily: FONTS.regular,
     fontSize: 12.5,
@@ -557,6 +677,8 @@ const styles = StyleSheet.create({
     gap: 6,
     paddingHorizontal: 14,
     paddingVertical: 10,
+    // Uzun kullanıcı adlarında taşıp kesilmesin diye alt satıra insin.
+    flexWrap: 'wrap',
   },
   metaText: { fontFamily: FONTS.regular, fontSize: 11, color: COLORS.textLight },
   metaDot: { fontSize: 11, color: COLORS.textLight },
@@ -578,6 +700,15 @@ const styles = StyleSheet.create({
     color: COLORS.textMuted,
     textAlign: 'center',
     marginTop: 4,
+  },
+  emptyHint: {
+    fontFamily: FONTS.regular,
+    fontSize: 12,
+    color: COLORS.textLight,
+    textAlign: 'center',
+    marginTop: SPACING.md,
+    maxWidth: 300,
+    lineHeight: 18,
   },
   deleteWrap: {
     width: 90,

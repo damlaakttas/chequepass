@@ -48,6 +48,7 @@ import {
   resolveIdleColor,
   tintTemplate,
 } from '../theme/romantic';
+import { expiryDaysFor } from '../config/cheques';
 import { useApp } from '../context/AppContext';
 import { usePremium } from '../context/PremiumContext';
 import { pickRandom } from '../utils/helpers';
@@ -421,7 +422,7 @@ const HomeScreen = ({ navigation }) => {
 
                   {phase === 'shuffling' && shufflePreview && (
                     <Animated.View style={shuffleAnimStyle}>
-                      <ChequeCardStatic template={shufflePreview} />
+                      <ChequeCardStatic template={shufflePreview} deckVariant={currentVariant} />
                     </Animated.View>
                   )}
 
@@ -430,6 +431,7 @@ const HomeScreen = ({ navigation }) => {
                       key={currentTemplate.title + currentTemplate.id}
                       template={currentTemplate}
                       friendName={activeFriend.username}
+                      deckVariant={currentVariant}
                       onResolve={handleResolve}
                     />
                   )}
@@ -521,15 +523,20 @@ const HomeScreen = ({ navigation }) => {
             onPress={skipNote}
             disabled={saving}
           >
-            <Text style={styles.ghostBtnText}>Atla</Text>
+            <Text style={styles.ghostBtnText}>Notsuz Gönder</Text>
           </TouchableOpacity>
+          {/* Not yazılmadan "Not Ekle" basılamaz; boş not eklemenin anlamı yok.
+              Not yazmak istemeyen "Notsuz Gönder"i kullanır. */}
           <TouchableOpacity
-            style={[styles.primaryBtn, { flex: 1, opacity: saving ? 0.6 : 1 }]}
+            style={[
+              styles.primaryBtn,
+              { flex: 1, opacity: saving || !noteText.trim() ? 0.45 : 1 },
+            ]}
             onPress={finalizeResolve}
-            disabled={saving}
+            disabled={saving || !noteText.trim()}
           >
             <Text style={styles.primaryBtnText}>
-              {saving ? 'Kaydediliyor...' : 'Kaydet'}
+              {saving ? 'Kaydediliyor...' : 'Not Ekle'}
             </Text>
           </TouchableOpacity>
         </View>
@@ -539,7 +546,7 @@ const HomeScreen = ({ navigation }) => {
 };
 
 // Statik kart (shuffle sırasında)
-const ChequeCardStatic = ({ template }) => (
+const ChequeCardStatic = ({ template, deckVariant = 'normal' }) => (
   <View style={[staticStyles.card, { backgroundColor: template.color }]}>
     <View style={staticStyles.topRow}>
       <View style={staticStyles.chipLight}>
@@ -557,7 +564,7 @@ const ChequeCardStatic = ({ template }) => (
       </View>
       <View style={{ alignItems: 'flex-end' }}>
         <Text style={staticStyles.label}>GEÇERLİLİK</Text>
-        <Text style={staticStyles.value}>Süresiz</Text>
+        <Text style={staticStyles.value}>{expiryDaysFor(deckVariant)} gün</Text>
       </View>
     </View>
   </View>

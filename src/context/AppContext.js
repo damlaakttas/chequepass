@@ -9,6 +9,7 @@
 // - `freePassUsed` ve `lastPassResetAt` ile günde 1 ücretsiz pas mantığı.
 
 import React, { createContext, useContext, useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import { Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import {
@@ -47,7 +48,9 @@ import {
   markChequeUsed,
   updateUserAvatar,
   deleteCheque,
+  markUsernameVerified,
 } from '../services/firebase-service';
+import { isChequeExpired, expiryDaysFor } from '../config/cheques';
 
 const AppContext = createContext(null);
 
@@ -235,6 +238,43 @@ export const AppProvider = ({ children }) => {
             // Satın alma kimliğini bu hesaba bağla (hata fırlatmaz).
             identifyPurchaseUser(currentUser.uid);
 
+            // E-POSTA DOĞRULAMA SONRASI İLK GİRİŞ:
+            // Kayıt anında kullanıcı adı yalnızca kısa süreli "rezervasyon"
+            // olarak yazılır. Kullanıcı e-postasını doğrulayıp giriş
+            // yaptığında burada kalıcı hale getirilir.
+            //
+            // Rezervasyon süresi dolduysa ad bu arada başkasına geçmiş
+            // olabilir; o durumda hesap kullanılamaz hale gelir çünkü
+            // profildeki kullanıcı adı artık başkasına ait. Bu hesabı
+            // temizleyip kullanıcıyı yeni bir adla kayda yönlendiriyoruz.
+            if (profile.emailVerified !== true) {
+              const result = await markUsernameVerified({
+                uid: currentUser.uid,
+                username: profile.username,
+              });
+
+              if (result?.lost) {
+                console.warn('Kullanıcı adı rezervasyon süresi dolmadan önce devralınmış');
+                try {
+                  await deleteDoc(doc(db, 'users', currentUser.uid));
+                } catch (e) {
+                  console.warn('Orphan profile delete failed:', e);
+                }
+                try {
+                  await deleteUser(currentUser);
+                } catch (e) {
+                  try { await fbSignOut(auth); } catch (e2) {}
+                }
+                setState((prev) => ({ ...prev, user: null }));
+                setAuthReady(true);
+                Alert.alert(
+                  'Kullanıcı adı alınmış',
+                  `"@${profile.username}" doğrulama tamamlanmadan başka biri tarafından alındı. Farklı bir kullanıcı adıyla tekrar kayıt olabilirsin.`
+                );
+                return;
+              }
+            }
+
             setState((prev) => ({
               ...prev,
               user: {
@@ -392,6 +432,8 @@ export const AppProvider = ({ children }) => {
             ...data,
             createdAtMillis: tsToMillis(data.createdAt),
             usedAtMillis: tsToMillis(data.usedAt),
+            // expiresAt olmayan (bu özellikten önce kopartılmış) çekler süresizdir.
+            expiresAtMillis: tsToMillis(data.expiresAt),
           };
         });
 
@@ -843,13 +885,20 @@ export const AppProvider = ({ children }) => {
   }, []);
 
   const useChequeCard = useCallback(async (chequeId) => {
+    // Süresi dolmuş çek kullanılamaz. Arayüzde buton zaten gizli ama
+    // yarış durumlarında (kullanıcı ekranı açık tutarken süre dolarsa)
+    // burada da kapatıyoruz.
+    const target = state.cheques.find((c) => c.id === chequeId);
+    if (isChequeExpired(target)) {
+      throw new Error('Bu çekin süresi doldu, artık kullanılamaz.');
+    }
     try {
       await markChequeUsed(chequeId);
     } catch (e) {
       console.error('Mark used failed:', e);
       throw new Error('Çek kullanılamadı: ' + (e.message || 'bilinmeyen hata'));
     }
-  }, []);
+  }, [state.cheques]);
 
   /**
    * Kullanılmış çeki sil. Sadece çekin sahibi (status='used' olanı) silebilir.
