@@ -5,6 +5,12 @@ service cloud.firestore {
     function isAuth() { return request.auth != null; }
     function isUser(uid) { return isAuth() && request.auth.uid == uid; }
 
+    // Alıcı, göndereni engellemiş mi? (Mesajlaşma için — Guideline 1.2)
+    function blockedBy(recipientId) {
+      return request.auth.uid in
+        get(/databases/$(database)/documents/users/$(recipientId)).data.get('blocked', []);
+    }
+
     // --- Users ---
     match /users/{uid} {
       allow read:   if isAuth();
@@ -72,6 +78,54 @@ service cloud.firestore {
       // Silme:
       // - Sahibi, kullanılmış çeki silebilir (mevcut davranış)
       // - Hesap silme akışı: katılımcı olduğu tüm çekleri silebilir
+      allow delete: if isAuth() && request.auth.uid in resource.data.participants;
+    }
+
+    // --- Messages (birebir sohbet) ---
+    //
+    // Yalnızca ilişkinin iki tarafı okuyabilir. Gönderen kendi adına yazar,
+    // kendine mesaj atamaz ve KARŞI TARAF ENGELLEMİŞSE yazamaz.
+    // Mesajlar değiştirilemez; taraflar kendi sohbetlerinden silebilir.
+    match /messages/{mid} {
+      allow get:    if isAuth() && (resource == null || request.auth.uid in resource.data.participants);
+      allow list:   if isAuth();
+      allow create: if isAuth()
+        && request.resource.data.senderId == request.auth.uid
+        && request.auth.uid in request.resource.data.participants
+        && request.resource.data.recipientId != request.auth.uid
+        && request.resource.data.recipientId in request.resource.data.participants
+        && request.resource.data.text is string
+        && request.resource.data.text.size() > 0
+        && request.resource.data.text.size() <= 500
+        && !blockedBy(request.resource.data.recipientId);
+      allow update: if false;
+      allow delete: if isAuth() && request.auth.uid in resource.data.participants;
+    }
+
+    // --- Reports (şikayet) ---
+    //
+    // Kullanıcı yalnızca kendi adına şikayet oluşturabilir. Şikayetleri
+    // kimse okuyamaz/değiştiremez; inceleme Admin SDK ile yapılır.
+    match /reports/{rid} {
+      allow read:   if false;
+      allow create: if isAuth() && request.resource.data.reporterId == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    // --- Nudges (dürtme) ---
+    //
+    // Yalnızca gönderen kendi adına, kendisinin de katılımcı olduğu bir
+    // dürtme oluşturabilir. Kendini dürtemez. Güncelleme yok; silmeyi
+    // taraflardan biri yapabilir (eski kayıtların temizliği için).
+    match /nudges/{nid} {
+      allow get:    if isAuth() && (resource == null || request.auth.uid in resource.data.participants);
+      allow list:   if isAuth();
+      allow create: if isAuth()
+        && request.resource.data.fromId == request.auth.uid
+        && request.auth.uid in request.resource.data.participants
+        && request.resource.data.toId != request.auth.uid
+        && !blockedBy(request.resource.data.toId);
+      allow update: if false;
       allow delete: if isAuth() && request.auth.uid in resource.data.participants;
     }
 

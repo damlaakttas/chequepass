@@ -21,6 +21,21 @@ export const TERMS_TEXT = `ChequePass uygulamasını kullanarak aşağıdaki şa
 
 7. Kötüye kullanım tespit edilen hesaplar askıya alınabilir.
 
+8. MESAJLAŞMA VE KULLANICI İÇERİĞİ
+Uygulama, eşleştiğin arkadaşlarınla birebir mesajlaşma imkânı sunar. Gönderdiğin mesajların içeriğinden yalnızca sen sorumlusun.
+
+Aşağıdakiler kesinlikle yasaktır ve sıfır tolerans uygulanır:
+- Taciz, hakaret, nefret söylemi, tehdit veya şiddet çağrısı
+- Reşit olmayan kişileri konu alan ya da hedef alan her türlü içerik
+- İzinsiz özel bilgi paylaşımı, spam ve dolandırıcılık
+- Yasa dışı içerik
+
+Uygunsuz ifade içeren mesajlar otomatik olarak engellenir. Herhangi bir mesaja uzun basarak şikayet edebilir, sohbet menüsünden kullanıcıyı engelleyebilirsin. Engellediğin kişi sana mesaj gönderemez ve seni dürtemez; engeli Profil > Engellenen kullanıcılar bölümünden kaldırabilirsin.
+
+Şikayetler en geç 24 saat içinde incelenir. Kuralları ihlal eden içerik kaldırılır ve ilgili hesap uyarılır, askıya alınır veya kalıcı olarak kapatılır.
+
+Şikayet ve destek için: destek@chequepass.app
+
 Bu şartları ayrıntılı olarak okuman önerilir.`;
 
 export const PRIVACY_TEXT = `Gizliliğine saygı duyuyoruz.

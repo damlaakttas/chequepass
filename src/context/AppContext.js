@@ -9,7 +9,7 @@
 // - `freePassUsed` ve `lastPassResetAt` ile günde 1 ücretsiz pas mantığı.
 
 import React, { createContext, useContext, useEffect, useState, useCallback, useMemo, useRef } from 'react';
-import { Alert } from 'react-native';
+import { Alert, Vibration } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import {
@@ -31,6 +31,7 @@ import {
   query,
   where,
   orderBy,
+  limit,
   onSnapshot,
   updateDoc,
   deleteDoc,
@@ -49,13 +50,22 @@ import {
   updateUserAvatar,
   deleteCheque,
   markUsernameVerified,
+  sendNudge as sendNudgeDoc,
+  sendMessage as sendMessageDoc,
+  markConversationRead as markConversationReadDoc,
+  blockUser as blockUserDoc,
+  unblockUser as unblockUserDoc,
+  reportContent as reportContentDoc,
 } from '../services/firebase-service';
+import { validateMessage } from '../utils/moderation';
 import { isChequeExpired, expiryDaysFor } from '../config/cheques';
 
 const AppContext = createContext(null);
 
 const STORAGE_KEY = '@chequepass_state_v1';
-const ONBOARDED_KEY = '@chequepass_onboarded_v1';
+// v2: statik pop-up yerine etkileşimli demo geldi. Anahtarı değiştirdik ki
+// eski tanıtımı görmüş kullanıcılar da yeni demoyu bir kez görsün.
+const ONBOARDED_KEY = '@chequepass_onboarded_v2';
 const READ_KEY = '@chequepass_read_v1';            // { [notifId]: true }
 const PASS_EVENTS_KEY = '@chequepass_pass_events_v1'; // [{ id, title, ts }]
 const LAST_PASS_RESET_KEY = '@chequepass_last_pass_reset_v1';
@@ -76,6 +86,10 @@ const ACCOUNT_SCOPED_KEYS = [
 const PASS_EVENTS_MAX = 50;
 const PASS_RESET_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 saat
 
+// Dürtme: aynı kişiye peş peşe spam atılmasın diye bekleme süresi.
+const NUDGE_COOLDOWN_MS = 60 * 1000;
+const NUDGE_HISTORY_LIMIT = 50;
+
 const AVATAR_POOL = ['fox', 'panda', 'koala', 'bunny', 'cat', 'owl'];
 const randomAvatar = () => AVATAR_POOL[Math.floor(Math.random() * AVATAR_POOL.length)];
 
@@ -87,6 +101,7 @@ const seedState = () => ({
   friends: [],
   friendRequests: [],
   cheques: [],
+  nudges: [],                // son dürtmeler (Firestore)
   passEvents: [],            // local pas geçmişi
   readMap: {},               // { [notifId]: true }
   achievements: [
@@ -160,7 +175,7 @@ export const AppProvider = ({ children }) => {
 
         if (raw) {
           const parsed = JSON.parse(raw);
-          const { user, friends, friendRequests, cheques, notifications, ...rest } = parsed;
+          const { user, friends, friendRequests, cheques, nudges, notifications, ...rest } = parsed;
           setState((prev) => ({
             ...prev,
             ...rest,
@@ -194,6 +209,7 @@ export const AppProvider = ({ children }) => {
       friends,
       friendRequests,
       cheques,
+      nudges,
       passEvents,
       readMap,
       isOnboarded,
@@ -302,6 +318,7 @@ export const AppProvider = ({ children }) => {
           friends: [],
           friendRequests: [],
           cheques: [],
+          nudges: [],
         }));
       }
       setAuthReady(true);
@@ -363,6 +380,16 @@ export const AppProvider = ({ children }) => {
               romanticPurchasedBy: r.romantic?.purchasedBy || null,
               acceptedAtMillis: tsToMillis(r.acceptedAt) || tsToMillis(r.createdAt),
               createdAtMillis: tsToMillis(r.createdAt),
+              // Sohbet: son mesaj ve okundu bilgisi ilişki dokümanında tutulur,
+              // böylece Mesajlar listesi arkadaş başına ayrı sorgu atmaz.
+              lastMessage: r.lastMessage
+                ? {
+                    text: r.lastMessage.text || '',
+                    senderId: r.lastMessage.senderId || null,
+                    createdAtMillis: tsToMillis(r.lastMessage.createdAt),
+                  }
+                : null,
+              lastReadMillis: tsToMillis(r.lastRead?.[uid]),
             };
           });
 
@@ -456,6 +483,72 @@ export const AppProvider = ({ children }) => {
       },
       (error) => {
         console.error('Cheques listener error:', error);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [state.user?.uid]);
+
+  // ---- Kendi profilim (engellenen kullanıcı listesi için) ----
+  useEffect(() => {
+    if (!state.user?.uid) return;
+    const unsubscribe = onSnapshot(
+      doc(db, 'users', state.user.uid),
+      (snap) => {
+        if (!snap.exists()) return;
+        const blocked = snap.data().blocked || [];
+        setState((prev) =>
+          prev.user ? { ...prev, user: { ...prev.user, blocked } } : prev
+        );
+      },
+      (error) => console.warn('Own profile listener error:', error)
+    );
+    return () => unsubscribe();
+  }, [state.user?.uid]);
+
+  // ---- Nudges (dürtme) real-time dinleyicisi ----
+  //
+  // Uygulama AÇIKKEN gelen dürtmede cihazı titretiyoruz. Uygulama kapalıyken
+  // titreşimi işletim sistemi push bildirimiyle yapar (Cloud Function).
+  const nudgeSeenRef = useRef({ initialized: false, lastMillis: 0 });
+
+  useEffect(() => {
+    if (!state.user?.uid) return;
+    const uid = state.user.uid;
+    nudgeSeenRef.current = { initialized: false, lastMillis: 0 };
+
+    const q = query(
+      collection(db, 'nudges'),
+      where('participants', 'array-contains', uid),
+      orderBy('createdAt', 'desc'),
+      limit(NUDGE_HISTORY_LIMIT)
+    );
+
+    const unsubscribe = onSnapshot(
+      q,
+      (snap) => {
+        const nudges = snap.docs.map((d) => {
+          const data = d.data();
+          return { id: d.id, ...data, createdAtMillis: tsToMillis(data.createdAt) };
+        });
+
+        const incoming = nudges.filter((n) => n.toId === uid);
+        const newest = incoming[0]?.createdAtMillis || 0;
+
+        if (!nudgeSeenRef.current.initialized) {
+          // İlk yükleme: geçmiş dürtmeler için titretme.
+          nudgeSeenRef.current = { initialized: true, lastMillis: newest };
+        } else if (newest > nudgeSeenRef.current.lastMillis) {
+          nudgeSeenRef.current.lastMillis = newest;
+          try {
+            Vibration.vibrate(400);
+          } catch (e) {}
+        }
+
+        setState((prev) => ({ ...prev, nudges }));
+      },
+      (error) => {
+        console.error('Nudges listener error:', error);
       }
     );
 
@@ -792,6 +885,16 @@ export const AppProvider = ({ children }) => {
 
   // ---- Local actions -----------------------------------------------
 
+  // Tanıtımı sıfırla — Profil'deki "Tanıtımı tekrar izle" için.
+  const resetOnboarding = useCallback(async () => {
+    try {
+      await AsyncStorage.removeItem(ONBOARDED_KEY);
+    } catch (e) {
+      console.warn('Reset onboarding failed', e);
+    }
+    setState((prev) => ({ ...prev, isOnboarded: false }));
+  }, []);
+
   const setOnboarded = useCallback(async () => {
     try {
       await AsyncStorage.setItem(ONBOARDED_KEY, 'true');
@@ -921,6 +1024,123 @@ export const AppProvider = ({ children }) => {
     });
   }, []);
 
+  /**
+   * DÜRTME gönder. friendId = friendship dokümanının id'si.
+   *
+   * Aynı kişiye 60 saniyede birden fazla gönderilemez (bildirim spam'ini
+   * önlemek için). Karşı tarafın telefonuna push bildirimi Cloud Function
+   * tarafından yollanır.
+   */
+  const nudgeCooldownRef = useRef({});
+
+  const nudgeFriend = useCallback(
+    async (friendId) => {
+      const currentUser = state.user;
+      const friend = state.friends.find((f) => f.id === friendId);
+      if (!currentUser || !friend) throw new Error('Arkadaş bulunamadı');
+
+      const last = nudgeCooldownRef.current[friendId] || 0;
+      const waited = Date.now() - last;
+      if (waited < NUDGE_COOLDOWN_MS) {
+        const seconds = Math.ceil((NUDGE_COOLDOWN_MS - waited) / 1000);
+        throw new Error(`Biraz yavaş! ${seconds} saniye sonra tekrar dürtebilirsin.`);
+      }
+
+      // İyimser kilit: istek başarısız olursa geri alınır.
+      nudgeCooldownRef.current[friendId] = Date.now();
+      try {
+        await sendNudgeDoc({
+          friendshipId: friendId,
+          fromId: currentUser.uid,
+          toId: friend.otherUid,
+          fromUsername: currentUser.username || '',
+          participants: [currentUser.uid, friend.otherUid],
+        });
+      } catch (e) {
+        nudgeCooldownRef.current[friendId] = last;
+        console.error('Nudge failed:', e);
+        throw new Error('Dürtme gönderilemedi: ' + (e.message || 'bilinmeyen hata'));
+      }
+
+      // Gönderene kısa bir dokunsal geri bildirim.
+      try {
+        Vibration.vibrate(60);
+      } catch (e) {}
+    },
+    [state.user, state.friends]
+  );
+
+  // ---- Sohbet -------------------------------------------------------------
+
+  /** Mesaj gönder. İçerik filtresinden geçmeyen mesaj gönderilmez. */
+  const sendChatMessage = useCallback(
+    async (friendId, text) => {
+      const currentUser = state.user;
+      const friend = state.friends.find((f) => f.id === friendId);
+      if (!currentUser || !friend) throw new Error('Sohbet bulunamadı');
+
+      const check = validateMessage(text);
+      if (!check.ok) throw new Error(check.error);
+
+      try {
+        await sendMessageDoc({
+          friendshipId: friendId,
+          senderId: currentUser.uid,
+          recipientId: friend.otherUid,
+          participants: [currentUser.uid, friend.otherUid],
+          text: check.value,
+        });
+      } catch (e) {
+        console.error('sendChatMessage failed:', e);
+        if (e?.code === 'permission-denied') {
+          throw new Error('Mesaj gönderilemedi. Karşı taraf seni engellemiş olabilir.');
+        }
+        throw new Error('Mesaj gönderilemedi: ' + (e.message || 'bilinmeyen hata'));
+      }
+    },
+    [state.user, state.friends]
+  );
+
+  /** Sohbeti okundu işaretle (sohbet ekranı açılınca / yeni mesaj gelince). */
+  const markChatRead = useCallback(
+    async (friendId) => {
+      if (!state.user?.uid || !friendId) return;
+      await markConversationReadDoc(friendId, state.user.uid);
+    },
+    [state.user?.uid]
+  );
+
+  const blockFriend = useCallback(
+    async (otherUid) => {
+      if (!state.user?.uid) return;
+      await blockUserDoc(state.user.uid, otherUid);
+    },
+    [state.user?.uid]
+  );
+
+  const unblockFriend = useCallback(
+    async (otherUid) => {
+      if (!state.user?.uid) return;
+      await unblockUserDoc(state.user.uid, otherUid);
+    },
+    [state.user?.uid]
+  );
+
+  const reportMessage = useCallback(
+    async ({ reportedId, friendshipId, messageId, messageText, reason }) => {
+      if (!state.user?.uid) throw new Error('Oturum bulunamadı');
+      await reportContentDoc({
+        reporterId: state.user.uid,
+        reportedId,
+        friendshipId,
+        messageId,
+        messageText,
+        reason,
+      });
+    },
+    [state.user?.uid]
+  );
+
   const grantExtraPass = useCallback(() => {
     setState((prev) => ({ ...prev, freePassUsed: false }));
   }, []);
@@ -1002,7 +1222,24 @@ export const AppProvider = ({ children }) => {
       //     - Pas geçtim
     });
 
-    // 3. Pas events: artık bildirim üretmiyor (kullanıcı kendi pasını biliyor).
+    // 3. Dürtmeler — sadece BANA gelenler (kendi gönderdiğim için bildirim yok)
+    (state.nudges || []).forEach((n) => {
+      if (n.toId !== uid) return;
+      const fromName =
+        n.fromUsername ||
+        state.friends.find((f) => f.otherUid === n.fromId)?.username ||
+        'Arkadaşın';
+      list.push({
+        id: `n_nudge_${n.id}`,
+        type: 'nudge_received',
+        title: 'Dürtüldün 👋',
+        body: `@${fromName} seni dürttü`,
+        createdAtMillis: n.createdAtMillis || Date.now(),
+        payload: { friendshipId: n.friendshipId },
+      });
+    });
+
+    // 4. Pas events: artık bildirim üretmiyor (kullanıcı kendi pasını biliyor).
 
     // En yeni en üstte
     list.sort((a, b) => (b.createdAtMillis || 0) - (a.createdAtMillis || 0));
@@ -1015,6 +1252,8 @@ export const AppProvider = ({ children }) => {
     state.user?.uid,
     state.friendRequests,
     state.cheques,
+    state.nudges,
+    state.friends,
     state.readMap,
   ]);
 
@@ -1091,6 +1330,44 @@ export const AppProvider = ({ children }) => {
     [derivedNotifications]
   );
 
+  // ---- Sohbet listesi (Mesajlar sekmesi) ----
+  //
+  // Her arkadaş bir sohbet. Son mesaj ve okundu bilgisi friendship
+  // dokümanından geldiği için ek sorgu gerekmiyor.
+  const conversations = useMemo(() => {
+    const uid = state.user?.uid;
+    if (!uid) return [];
+    const blocked = state.user?.blocked || [];
+    return state.friends
+      .map((f) => {
+        const lm = f.lastMessage;
+        const lastAt = lm?.createdAtMillis || 0;
+        const unread =
+          !!lm &&
+          !!lm.senderId &&
+          lm.senderId !== uid &&
+          lastAt > (f.lastReadMillis || 0);
+        return {
+          ...f,
+          unread,
+          lastMessageAtMillis: lastAt,
+          isBlocked: blocked.includes(f.otherUid),
+        };
+      })
+      .sort((a, b) => {
+        // Mesajlaşılanlar üstte, sonra en yeni mesaj
+        if (b.lastMessageAtMillis !== a.lastMessageAtMillis) {
+          return b.lastMessageAtMillis - a.lastMessageAtMillis;
+        }
+        return (a.username || '').localeCompare(b.username || '', 'tr');
+      });
+  }, [state.friends, state.user?.uid, state.user?.blocked]);
+
+  const unreadMessageCount = useMemo(
+    () => conversations.filter((c) => c.unread).length,
+    [conversations]
+  );
+
   const value = useMemo(
     () => ({
       ...state,
@@ -1101,12 +1378,27 @@ export const AppProvider = ({ children }) => {
       chequesForActiveFriend,
       notifications: derivedNotifications,
       unreadCount,
+      conversations,
+      unreadMessageCount,
+      sendChatMessage,
+      markChatRead,
+      blockFriend,
+      unblockFriend,
+      reportMessage,
+      conversations,
+      unreadMessageCount,
+      sendChatMessage,
+      markChatRead,
+      blockFriend,
+      unblockFriend,
+      reportMessage,
       signUp,
       signIn,
       signOut,
       deleteAccount,
       resetPassword,
       setOnboarded,
+      resetOnboarding,
       setActiveFriend,
       setSelectedDeckVariant,
       acceptFriendRequest,
@@ -1121,6 +1413,7 @@ export const AppProvider = ({ children }) => {
       markNotificationRead,
       markAllNotificationsRead: markAllNotificationsReadFinal,
       grantExtraPass,
+      nudgeFriend,
       setAvatar,
     }),
     [
@@ -1138,6 +1431,7 @@ export const AppProvider = ({ children }) => {
       deleteAccount,
       resetPassword,
       setOnboarded,
+      resetOnboarding,
       setActiveFriend,
       setSelectedDeckVariant,
       acceptFriendRequest,
@@ -1152,6 +1446,7 @@ export const AppProvider = ({ children }) => {
       markNotificationRead,
       markAllNotificationsReadFinal,
       grantExtraPass,
+      nudgeFriend,
       setAvatar,
     ]
   );

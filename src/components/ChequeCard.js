@@ -6,16 +6,20 @@
 //
 // Seri numarası ve "ChequePass" filigranı KALDIRILDI.
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import { View, Text, StyleSheet, Dimensions } from 'react-native';
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
   withSpring,
   withTiming,
+  withRepeat,
+  withSequence,
+  cancelAnimation,
   runOnJS,
   interpolate,
   Extrapolation,
+  Easing,
 } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { Gift, Download, SkipForward } from 'lucide-react-native';
@@ -28,12 +32,60 @@ export const CARD_H = Math.min(SCREEN_H * 0.55, 480);
 
 const SWIPE_THRESHOLD = 110;
 
-const ChequeCard = ({ template, onResolve, friendName, deckVariant = 'normal' }) => {
+/**
+ * props:
+ *  - lockDirection: 'gift' | 'keep' | 'pass' | null
+ *      Verilirse SADECE o yöne kaydırma kabul edilir, diğer yönler yerine döner.
+ *      İlk açılış tanıtımında adım adım ilerletmek için kullanılıyor.
+ *  - hintDirection: 'gift' | 'keep' | 'pass' | null
+ *      Verilirse kart o yöne doğru kendi kendine hafifçe oynayarak ne
+ *      yapılması gerektiğini gösterir. Kullanıcı karta dokununca durur.
+ */
+const ChequeCard = ({
+  template,
+  onResolve,
+  friendName,
+  deckVariant = 'normal',
+  lockDirection = null,
+  hintDirection = null,
+}) => {
   const translateX = useSharedValue(0);
   const translateY = useSharedValue(0);
+  const hintX = useSharedValue(0);
+  const hintY = useSharedValue(0);
 
   // Kart üstünde gösterilen geçerlilik: normal 3 gün, romantik 6 gün.
   const validityLabel = `${expiryDaysFor(deckVariant)} gün`;
+
+  // Otomatik ipucu hareketi (yalnızca tanıtımda).
+  useEffect(() => {
+    cancelAnimation(hintX);
+    cancelAnimation(hintY);
+    hintX.value = 0;
+    hintY.value = 0;
+    if (!hintDirection) return;
+
+    const distance = 30;
+    const loop = (to) =>
+      withRepeat(
+        withSequence(
+          withTiming(to, { duration: 620, easing: Easing.out(Easing.quad) }),
+          withTiming(0, { duration: 620, easing: Easing.inOut(Easing.quad) }),
+          withTiming(0, { duration: 520 })
+        ),
+        -1
+      );
+
+    if (hintDirection === 'gift') hintY.value = loop(-distance);
+    else if (hintDirection === 'keep') hintY.value = loop(distance);
+    else if (hintDirection === 'pass') hintX.value = loop(-distance);
+
+    return () => {
+      cancelAnimation(hintX);
+      cancelAnimation(hintY);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hintDirection]);
 
   const resolve = (direction) => {
     onResolve(direction);
@@ -42,6 +94,13 @@ const ChequeCard = ({ template, onResolve, friendName, deckVariant = 'normal' })
   };
 
   const pan = Gesture.Pan()
+    .onBegin(() => {
+      // Kullanıcı karta dokundu → ipucu hareketini bırak, kontrol onda.
+      cancelAnimation(hintX);
+      cancelAnimation(hintY);
+      hintX.value = withTiming(0, { duration: 120 });
+      hintY.value = withTiming(0, { duration: 120 });
+    })
     .onUpdate((e) => {
       translateX.value = e.translationX;
       translateY.value = e.translationY;
@@ -51,20 +110,24 @@ const ChequeCard = ({ template, onResolve, friendName, deckVariant = 'normal' })
       const absX = Math.abs(translationX);
       const absY = Math.abs(translationY);
 
+      // lockDirection varsa yalnızca o yön kabul edilir.
+      const allows = (dir) => lockDirection === null || lockDirection === dir;
+
       if (absY > absX && absY > SWIPE_THRESHOLD) {
-        if (translationY < 0) {
+        if (translationY < 0 && allows('gift')) {
           translateY.value = withTiming(-SCREEN_H, { duration: 260 }, () => {
             runOnJS(resolve)('gift');
           });
           return;
-        } else {
+        }
+        if (translationY > 0 && allows('keep')) {
           translateY.value = withTiming(SCREEN_H, { duration: 260 }, () => {
             runOnJS(resolve)('keep');
           });
           return;
         }
       }
-      if (translationX < -SWIPE_THRESHOLD) {
+      if (translationX < -SWIPE_THRESHOLD && absX > absY && allows('pass')) {
         translateX.value = withTiming(-SCREEN_W, { duration: 260 }, () => {
           runOnJS(resolve)('pass');
         });
@@ -89,8 +152,8 @@ const ChequeCard = ({ template, onResolve, friendName, deckVariant = 'normal' })
     );
     return {
       transform: [
-        { translateX: translateX.value },
-        { translateY: translateY.value },
+        { translateX: translateX.value + hintX.value },
+        { translateY: translateY.value + hintY.value },
         { rotate: `${rotate + rotateY}deg` },
       ],
     };

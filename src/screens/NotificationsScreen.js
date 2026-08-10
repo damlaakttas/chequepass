@@ -10,6 +10,8 @@ import {
   UserPlus,
   Sparkles,
   CheckCheck,
+  Vibrate,
+  ChevronLeft,
 } from 'lucide-react-native';
 import ScreenHeader from '../components/ScreenHeader';
 import { COLORS, FONTS, RADIUS, SHADOW, SPACING } from '../theme/theme';
@@ -20,6 +22,7 @@ const ICON_MAP = {
   gift_received: { Icon: Gift, bg: COLORS.primary },
   cheque_used_by_friend: { Icon: CheckCircle2, bg: COLORS.secondary },
   friend_request: { Icon: UserPlus, bg: COLORS.secondary },
+  nudge_received: { Icon: Vibrate, bg: '#fde68a' },
   system: { Icon: Sparkles, bg: COLORS.secondary },
 };
 
@@ -45,12 +48,21 @@ const NotificationsScreen = () => {
 
   const handleNotifPress = (item) => {
     markNotificationRead(item.id);
+    // Bildirimler artık sekme değil, Profil'den açılan bir ekran.
+    // Sekmelere giderken önce Main'e dönüyoruz.
     if (item.type === 'friend_request') {
-      navigation.navigate('Friends', { initialTab: 'requests' });
+      navigation.navigate('Main', {
+        screen: 'Friends',
+        params: { initialTab: 'requests' },
+      });
       return;
     }
     if (item.type === 'gift_received' || item.type === 'cheque_used_by_friend') {
-      navigation.navigate('Cheques');
+      navigation.navigate('Main', { screen: 'Cheques' });
+      return;
+    }
+    if (item.type === 'nudge_received') {
+      navigation.navigate('Main', { screen: 'Messages' });
       return;
     }
   };
@@ -60,7 +72,8 @@ const NotificationsScreen = () => {
     const clickable =
       item.type === 'friend_request' ||
       item.type === 'gift_received' ||
-      item.type === 'cheque_used_by_friend';
+      item.type === 'cheque_used_by_friend' ||
+      item.type === 'nudge_received';
 
     const inner = (
       <>
@@ -107,6 +120,15 @@ const NotificationsScreen = () => {
       />
 
       <View style={styles.titleWrap}>
+        <TouchableOpacity
+          style={styles.backRow}
+          onPress={() => navigation.goBack()}
+          hitSlop={8}
+          activeOpacity={0.7}
+        >
+          <ChevronLeft size={18} color={COLORS.textMuted} />
+          <Text style={styles.backText}>Profilim</Text>
+        </TouchableOpacity>
         <Text style={styles.pageTitle}>Bildirimler</Text>
         <Text style={styles.pageSub}>
           {notifications.length} bildirim
@@ -137,6 +159,8 @@ const NotificationsScreen = () => {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.background },
   titleWrap: { paddingHorizontal: SPACING.lg, paddingBottom: SPACING.md },
+  backRow: { flexDirection: 'row', alignItems: 'center', gap: 2, marginBottom: 4, alignSelf: 'flex-start' },
+  backText: { fontFamily: FONTS.medium, fontSize: 13, color: COLORS.textMuted },
   pageTitle: { fontFamily: FONTS.bold, fontSize: 28, color: COLORS.text, letterSpacing: -0.5 },
   pageSub: { fontFamily: FONTS.regular, fontSize: 13, color: COLORS.textMuted, marginTop: 2 },
   markBtn: {

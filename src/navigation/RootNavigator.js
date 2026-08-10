@@ -4,10 +4,12 @@ import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { FileText, Bell, Users, User, Sparkles } from 'lucide-react-native';
+import { FileText, MessageCircle, Users, User, Sparkles } from 'lucide-react-native';
 
 import HomeScreen from '../screens/HomeScreen';
 import ChequesScreen from '../screens/ChequesScreen';
+import MessagesScreen from '../screens/MessagesScreen';
+import ChatScreen from '../screens/ChatScreen';
 import NotificationsScreen from '../screens/NotificationsScreen';
 import FriendsScreen from '../screens/FriendsScreen';
 import ProfileScreen from '../screens/ProfileScreen';
@@ -21,21 +23,26 @@ const Stack = createNativeStackNavigator();
 
 // ---- Custom Bottom Tab Bar ---------------------------------------------------
 const CustomTabBar = ({ state, descriptors, navigation }) => {
-  const { unreadCount } = useApp();
+  // Bildirimler artık Profil sayfasının içinde; sekmede yerini Mesajlar aldı.
+  const { unreadMessageCount, unreadCount } = useApp();
 
-  // Sıra: Çeklerim, Bildirimler, [Home/Çek Kopar], Arkadaşlar, Profil
-  const ORDERED = ['Cheques', 'Notifications', 'Home', 'Friends', 'Profile'];
+  // Sıra: Çeklerim, Mesajlar, [Home/Çek Kopar], Arkadaşlar, Profil
+  const ORDERED = ['Cheques', 'Messages', 'Home', 'Friends', 'Profile'];
   const iconMap = {
     Cheques: FileText,
-    Notifications: Bell,
+    Messages: MessageCircle,
     Friends: Users,
     Profile: User,
   };
   const labelMap = {
     Cheques: 'Çeklerim',
-    Notifications: 'Bildirimler',
+    Messages: 'Mesajlar',
     Friends: 'Arkadaşlar',
     Profile: 'Profilim',
+  };
+  const badgeMap = {
+    Messages: unreadMessageCount,
+    Profile: unreadCount, // okunmamış bildirim sayısı Profil'de
   };
 
   return (
@@ -78,7 +85,8 @@ const CustomTabBar = ({ state, descriptors, navigation }) => {
           }
 
           const Icon = iconMap[name];
-          const showBadge = name === 'Notifications' && unreadCount > 0;
+          const badgeValue = badgeMap[name] || 0;
+          const showBadge = badgeValue > 0;
 
           return (
             <TouchableOpacity
@@ -96,7 +104,7 @@ const CustomTabBar = ({ state, descriptors, navigation }) => {
                 {showBadge && (
                   <View style={styles.badge}>
                     <Text style={styles.badgeText}>
-                      {unreadCount > 9 ? '9+' : unreadCount}
+                      {badgeValue > 9 ? '9+' : badgeValue}
                     </Text>
                   </View>
                 )}
@@ -119,7 +127,7 @@ const MainTabs = () => (
     initialRouteName="Home"
   >
     <Tab.Screen name="Cheques" component={ChequesScreen} />
-    <Tab.Screen name="Notifications" component={NotificationsScreen} />
+    <Tab.Screen name="Messages" component={MessagesScreen} />
     <Tab.Screen name="Home" component={HomeScreen} />
     <Tab.Screen name="Friends" component={FriendsScreen} />
     <Tab.Screen name="Profile" component={ProfileScreen} />
@@ -139,7 +147,11 @@ const RootNavigator = () => {
         }}
       >
         {user ? (
-          <Stack.Screen name="Main" component={MainTabs} />
+          <>
+            <Stack.Screen name="Main" component={MainTabs} />
+            <Stack.Screen name="Chat" component={ChatScreen} />
+            <Stack.Screen name="Notifications" component={NotificationsScreen} />
+          </>
         ) : (
           <Stack.Screen
             name="Auth"

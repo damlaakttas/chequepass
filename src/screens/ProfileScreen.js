@@ -1,5 +1,6 @@
 // src/screens/ProfileScreen.js
 import React, { useState, useMemo } from 'react';
+import { useNavigation } from '@react-navigation/native';
 import {
   View,
   Text,
@@ -28,6 +29,9 @@ import {
   AlertTriangle,
   FileText,
   Shield,
+  PlayCircle,
+  Bell,
+  Ban,
 } from 'lucide-react-native';
 import ScreenHeader from '../components/ScreenHeader';
 import AnimalAvatar from '../components/AnimalAvatar';
@@ -39,7 +43,23 @@ import { TERMS_TEXT, PRIVACY_TEXT } from '../config/legal';
 const AVATAR_OPTIONS = ['fox', 'panda', 'koala', 'bunny', 'cat', 'owl'];
 
 const ProfileScreen = () => {
-  const { user, friends, cheques, achievements, signOut, deleteAccount, setAvatar } = useApp();
+  const {
+    user,
+    friends,
+    cheques,
+    achievements,
+    signOut,
+    deleteAccount,
+    setAvatar,
+    resetOnboarding,
+    unreadCount,
+    unblockFriend,
+  } = useApp();
+  const navigation = useNavigation();
+
+  // Engellenen kullanıcılar (Guideline 1.2 — engeli kaldırma yolu şart)
+  const blockedUids = user?.blocked || [];
+  const blockedFriends = friends.filter((f) => blockedUids.includes(f.otherUid));
   // Romantik paket ilişkiye özel: herhangi bir ilişkide aktifse "aktif" say.
   const hasRomantic = friends.some((f) => f.romanticActive === true);
   const [avatarOpen, setAvatarOpen] = useState(false);
@@ -48,6 +68,7 @@ const ProfileScreen = () => {
   const [deletePassword, setDeletePassword] = useState('');
   const [deleting, setDeleting] = useState(false);
   const [legalOpen, setLegalOpen] = useState(null); // 'terms' | 'privacy' | null
+  const [blockedOpen, setBlockedOpen] = useState(false);
 
   // İstatistikler:
   // - won:    bana ait olan tüm çekler (ister kendi aldım, ister hediye aldım)
@@ -257,6 +278,64 @@ const ProfileScreen = () => {
           </View>
         </View>
 
+        {/* Bildirimler — eskiden alt sekmedeydi, artık burada */}
+        <View style={styles.section}>
+          <View style={styles.infoCard}>
+            <TouchableOpacity
+              style={styles.infoRow}
+              onPress={() => navigation.navigate('Notifications')}
+              activeOpacity={0.7}
+            >
+              <Bell size={16} color={COLORS.textMuted} />
+              <Text style={styles.infoLabel}>Bildirimler</Text>
+              {unreadCount > 0 && (
+                <View style={styles.notifBadge}>
+                  <Text style={styles.notifBadgeText}>
+                    {unreadCount > 9 ? '9+' : unreadCount}
+                  </Text>
+                </View>
+              )}
+              <ChevronRight size={16} color={COLORS.textMuted} />
+            </TouchableOpacity>
+            <View style={styles.divider} />
+            <TouchableOpacity
+              style={styles.infoRow}
+              onPress={() => setBlockedOpen(true)}
+              activeOpacity={0.7}
+            >
+              <Ban size={16} color={COLORS.textMuted} />
+              <Text style={styles.infoLabel}>Engellenen kullanıcılar</Text>
+              <Text style={styles.infoValue}>{blockedFriends.length}</Text>
+              <ChevronRight size={16} color={COLORS.textMuted} />
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Yardım */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Yardım</Text>
+          <View style={styles.infoCard}>
+            <TouchableOpacity
+              style={styles.infoRow}
+              onPress={() => {
+                Alert.alert(
+                  'Tanıtımı tekrar izle',
+                  'Kartı nasıl kullanacağını anlatan kısa tanıtım baştan başlasın mı?',
+                  [
+                    { text: 'Vazgeç', style: 'cancel' },
+                    { text: 'Başlat', onPress: () => resetOnboarding() },
+                  ]
+                );
+              }}
+              activeOpacity={0.7}
+            >
+              <PlayCircle size={16} color={COLORS.textMuted} />
+              <Text style={styles.infoLabel}>Tanıtımı tekrar izle</Text>
+              <ChevronRight size={16} color={COLORS.textMuted} />
+            </TouchableOpacity>
+          </View>
+        </View>
+
         {/* Yasal */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Yasal</Text>
@@ -330,6 +409,49 @@ const ProfileScreen = () => {
         satın alma yalnızca hedef kişi belliyken (Kopart veya Arkadaşlar ekranı)
         yapılabilir. Buradaki banner sadece bilgilendirme amaçlı.
       */}
+
+      {/* Engellenen kullanıcılar */}
+      <BottomSheet
+        visible={blockedOpen}
+        onClose={() => setBlockedOpen(false)}
+        title="Engellenen kullanıcılar"
+        maxHeight={520}
+      >
+        {blockedFriends.length === 0 ? (
+          <Text style={styles.blockedEmpty}>
+            Kimseyi engellemedin. Bir sohbetteki menüden kullanıcıyı engelleyebilirsin;
+            engellediğin kişi sana mesaj gönderemez ve seni dürtemez.
+          </Text>
+        ) : (
+          blockedFriends.map((f) => (
+            <View key={f.id} style={styles.blockedRow}>
+              <AnimalAvatar type={f.avatar} size={36} />
+              <Text style={styles.blockedName}>@{f.username}</Text>
+              <TouchableOpacity
+                style={styles.unblockBtn}
+                onPress={() =>
+                  Alert.alert('Engeli kaldır', `@${f.username} tekrar mesaj gönderebilecek.`, [
+                    { text: 'Vazgeç', style: 'cancel' },
+                    {
+                      text: 'Kaldır',
+                      onPress: async () => {
+                        try {
+                          await unblockFriend(f.otherUid);
+                        } catch (e) {
+                          Alert.alert('Hata', e.message || 'İşlem başarısız');
+                        }
+                      },
+                    },
+                  ])
+                }
+                activeOpacity={0.85}
+              >
+                <Text style={styles.unblockText}>Engeli kaldır</Text>
+              </TouchableOpacity>
+            </View>
+          ))
+        )}
+      </BottomSheet>
 
       {/* Yasal metinler */}
       <BottomSheet
@@ -617,6 +739,38 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: COLORS.danger,
   },
+  notifBadge: {
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    paddingHorizontal: 6,
+    backgroundColor: COLORS.danger,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  notifBadgeText: { fontFamily: FONTS.bold, fontSize: 10, color: '#fff' },
+  blockedEmpty: {
+    fontFamily: FONTS.regular,
+    fontSize: 13.5,
+    color: COLORS.textMuted,
+    lineHeight: 21,
+  },
+  blockedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  blockedName: { flex: 1, fontFamily: FONTS.semiBold, fontSize: 14, color: COLORS.text },
+  unblockBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: RADIUS.pill,
+    backgroundColor: COLORS.background,
+  },
+  unblockText: { fontFamily: FONTS.semiBold, fontSize: 12, color: COLORS.text },
   deleteAccountBtn: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -37,7 +37,6 @@ import Animated, {
 import ScreenHeader from '../components/ScreenHeader';
 import ChequeCard, { CARD_W, CARD_H } from '../components/ChequeCard';
 import DeckCard from '../components/DeckCard';
-import OnboardingOverlay from '../components/OnboardingOverlay';
 import BottomSheet from '../components/BottomSheet';
 import PaywallSheet from '../components/PaywallSheet';
 import RomanticBackdrop from '../components/RomanticBackdrop';
@@ -54,9 +53,28 @@ import { usePremium } from '../context/PremiumContext';
 import { pickRandom } from '../utils/helpers';
 import { playShuffleSound } from '../utils/sound';
 
+// İLK AÇILIŞ TANITIMI
+//
+// Ayrı bir tanıtım ekranı YOK. Kullanıcı doğrudan Kopart ekranında,
+// gerçek kartla üç hareketi sırayla yapıyor. Bu üç kart Firestore'a
+// YAZILMAZ — Çeklerim'e yansımaz, sadece öğretme amaçlıdır.
+const TUTORIAL_STEPS = [
+  { dir: 'gift', text: 'Kartı yukarı kaydır: çeki arkadaşına hediye edersin.' },
+  { dir: 'keep', text: 'Kartı aşağı kaydır: çeki kendine alırsın.' },
+  { dir: 'pass', text: 'Kartı sola kaydır: bu çeki istemedin, pas geçersin.' },
+];
+
+// Deste henüz yüklenmediyse ya da arkadaş yoksa gösterilecek örnek kartlar.
+const TUTORIAL_FALLBACK = [
+  { id: 't1', title: 'Kahve Senden', subtitle: 'Bir sonraki buluşmada kahveyi sen ısmarlıyorsun.', color: COLORS.primary },
+  { id: 't2', title: 'Film Seçimi', subtitle: 'Bu akşam ne izleyeceğimize sen karar veriyorsun.', color: COLORS.secondary },
+  { id: 't3', title: 'Bulaşık Nöbeti', subtitle: 'Bu haftanın bulaşıkları sana emanet.', color: '#c7d2fe' },
+];
+
 const HomeScreen = ({ navigation }) => {
   const {
     activeDeckInfo,
+    decks,
     decksLoaded,
     isOnboarded,
     setOnboarded,
@@ -92,6 +110,43 @@ const HomeScreen = ({ navigation }) => {
   const shuffleRotate = useSharedValue(0);
   const shuffleY = useSharedValue(0);
   const shuffleTimerRef = useRef(null);
+
+  // ---- İlk açılış tanıtımı (gerçek ekranın içinde) ----
+  //
+  // Yalnızca uygulama ilk kurulduğunda çalışır: isOnboarded cihaza yazılır,
+  // çıkış yapınca veya hesap silinince sıfırlanmaz.
+  const tutorialActive = !isOnboarded;
+  const [tutorialStep, setTutorialStep] = useState(0);
+  const [tutorialCards, setTutorialCards] = useState([]);
+  const tutorial = TUTORIAL_STEPS[tutorialStep] || null;
+
+  // Tanıtımda HER ZAMAN normal deste kullanılır — romantik kartlar örnek
+  // olarak gösterilmez. baseVariant ilişki türüne göre 'partner' ya da 'friend'.
+  const normalDeck = (decks?.[baseVariant]?.length ? decks[baseVariant] : decks?.friend) || [];
+
+  // Üç adım için birbirinden farklı üç kart seç (deste geldiğinde bir kez).
+  useEffect(() => {
+    if (!tutorialActive || !normalDeck.length) return;
+    const shuffled = [...normalDeck].sort(() => Math.random() - 0.5);
+    setTutorialCards(
+      TUTORIAL_STEPS.map((_, i) => shuffled[i % shuffled.length])
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tutorialActive, normalDeck.length]);
+
+  // Deste henüz gelmediyse örnek kartlarla başla.
+  const tutorialTemplate = tutorialCards[tutorialStep] || TUTORIAL_FALLBACK[tutorialStep];
+
+  // Tanıtımda swipe Firestore'a YAZILMAZ; sadece sonraki adıma geçilir.
+  const handleTutorialResolve = (direction) => {
+    if (!tutorial || direction !== tutorial.dir) return;
+    if (tutorialStep < TUTORIAL_STEPS.length - 1) {
+      setTutorialStep((s) => s + 1);
+    } else {
+      setOnboarded();
+      setTutorialStep(0);
+    }
+  };
 
   // Varyant veya aktif arkadaş değişince: akışı sıfırla ve kapalı kartın rengini
   // DOĞRUDAN yeni varyanta göre ata. (Eskiden iki ayrı effect vardı; ikincisi
@@ -294,13 +349,16 @@ const HomeScreen = ({ navigation }) => {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      {/* Romantik modda tüm ekranı kaplayan gradient + kalp deseni (normal modda yok) */}
-      {isRomanticMode && <RomanticBackdrop />}
+      {/* Romantik modda tüm ekranı kaplayan gradient + kalp deseni (normal modda yok).
+          Tanıtım normal kartlarla anlatıldığı için o sırada gösterilmez. */}
+      {isRomanticMode && !tutorialActive && <RomanticBackdrop />}
 
       <ScreenHeader />
 
       <View style={styles.container}>
-        {!activeFriend ? (
+        {/* Tanıtım sürerken arkadaş yoksa bile ekranı gösteriyoruz;
+            kullanıcı önce kartı kullanmayı öğreniyor. */}
+        {!activeFriend && !tutorialActive ? (
           <View style={styles.emptyBox}>
             <UserPlus size={40} color={COLORS.textMuted} />
             <Text style={styles.emptyTitle}>Önce bir arkadaş ekle</Text>
@@ -319,17 +377,35 @@ const HomeScreen = ({ navigation }) => {
           <>
             {/* Üst başlık - "@xxx ile oynuyorsun" KALDIRILDI */}
             <View style={styles.topInfo}>
-              <Text style={[styles.prompt, isRomanticMode && styles.promptRomantic]}>
-                {phase === 'idle' &&
-                  (isRomanticMode ? 'Romantik çekini kopart' : 'Şansını dene, çekini kopart')}
-                {phase === 'shuffling' && 'Kartlar karıştırılıyor...'}
-                {phase === 'ready' && 'Kartı kaydır'}
-                {phase === 'noting' && ' '}
-              </Text>
+              {tutorialActive ? (
+                <>
+                  <View style={styles.tutorialDots}>
+                    {TUTORIAL_STEPS.map((s, i) => (
+                      <View
+                        key={s.dir}
+                        style={[
+                          styles.tutorialDot,
+                          i === tutorialStep && styles.tutorialDotActive,
+                          i < tutorialStep && styles.tutorialDotDone,
+                        ]}
+                      />
+                    ))}
+                  </View>
+                  <Text style={styles.tutorialText}>{tutorial?.text}</Text>
+                </>
+              ) : (
+                <Text style={[styles.prompt, isRomanticMode && styles.promptRomantic]}>
+                  {phase === 'idle' &&
+                    (isRomanticMode ? 'Romantik çekini kopart' : 'Şansını dene, çekini kopart')}
+                  {phase === 'shuffling' && 'Kartlar karıştırılıyor...'}
+                  {phase === 'ready' && 'Kartı kaydır'}
+                  {phase === 'noting' && ' '}
+                </Text>
+              )}
 
               {/* Premium yoksa: kilitli "Romantik" ikon */}
               {/* Premium varsa: Normal/Romantik switcher */}
-              {phase === 'idle' && !romanticActive && (
+              {!tutorialActive && phase === 'idle' && !romanticActive && (
                 <TouchableOpacity
                   style={styles.lockedRomanticBtn}
                   onPress={() => setPaywallOpen(true)}
@@ -341,7 +417,7 @@ const HomeScreen = ({ navigation }) => {
                 </TouchableOpacity>
               )}
 
-              {phase === 'idle' && romanticActive && (
+              {!tutorialActive && phase === 'idle' && romanticActive && (
                 <View
                   style={[styles.variantSwitcher, isRomanticMode && styles.variantSwitcherRomantic]}
                 >
@@ -389,7 +465,21 @@ const HomeScreen = ({ navigation }) => {
             </View>
 
             <View style={styles.cardArea}>
-              {isDecksLoading ? (
+              {tutorialActive ? (
+                // Tanıtım: gerçek kart, yön kilitli + otomatik ipucu hareketi.
+                // onResolve Firestore'a YAZMAZ, sadece adımı ilerletir.
+                tutorialTemplate && (
+                  <ChequeCard
+                    key={`tutorial-${tutorialStep}`}
+                    template={tutorialTemplate}
+                    friendName={activeFriend?.username}
+                    deckVariant="normal"
+                    lockDirection={tutorial?.dir}
+                    hintDirection={tutorial?.dir}
+                    onResolve={handleTutorialResolve}
+                  />
+                )
+              ) : isDecksLoading ? (
                 <View style={styles.loadingBox}>
                   <ActivityIndicator size="large" color={COLORS.text} />
                   <Text style={styles.loadingText}>Kartlar yükleniyor...</Text>
@@ -445,30 +535,49 @@ const HomeScreen = ({ navigation }) => {
 
             <View style={styles.hintRow}>
               {[
-                { arrow: '↑', label: 'Hediye Et' },
-                { arrow: '↓', label: 'Kendine Al' },
-                { arrow: '←', label: 'Pas' },
-              ].map((h) => (
-                <View
-                  key={h.label}
-                  style={[styles.hintPill, isRomanticMode && styles.hintPillRomantic]}
-                >
-                  <Text style={[styles.hintEmoji, isRomanticMode && styles.hintTextRomantic]}>
-                    {h.arrow}
-                  </Text>
-                  <Text style={[styles.hintLabel, isRomanticMode && styles.hintTextRomantic]}>
-                    {h.label}
-                  </Text>
-                </View>
-              ))}
+                { arrow: '↑', label: 'Hediye Et', dir: 'gift' },
+                { arrow: '↓', label: 'Kendine Al', dir: 'keep' },
+                { arrow: '←', label: 'Pas', dir: 'pass' },
+              ].map((h) => {
+                // Tanıtımda sıradaki hareket vurgulanır, diğerleri soluklaşır.
+                const isTarget = tutorialActive && tutorial?.dir === h.dir;
+                const dimmed = tutorialActive && !isTarget;
+                return (
+                  <View
+                    key={h.label}
+                    style={[
+                      styles.hintPill,
+                      isRomanticMode && styles.hintPillRomantic,
+                      isTarget && styles.hintPillTarget,
+                      dimmed && styles.hintPillDimmed,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.hintEmoji,
+                        isRomanticMode && styles.hintTextRomantic,
+                        isTarget && styles.hintTextTarget,
+                      ]}
+                    >
+                      {h.arrow}
+                    </Text>
+                    <Text
+                      style={[
+                        styles.hintLabel,
+                        isRomanticMode && styles.hintTextRomantic,
+                        isTarget && styles.hintTextTarget,
+                      ]}
+                    >
+                      {h.label}
+                    </Text>
+                  </View>
+                );
+              })}
             </View>
           </>
         )}
       </View>
 
-      {!isOnboarded && activeFriend && (
-        <OnboardingOverlay onDismiss={setOnboarded} />
-      )}
 
       <PaywallSheet
         visible={paywallOpen}
@@ -645,6 +754,25 @@ const styles = StyleSheet.create({
   promptRomantic: {
     color: ROMANTIC.accentDark,
   },
+  // ---- Tanıtım ----
+  tutorialDots: { flexDirection: 'row', gap: 6, marginBottom: 4 },
+  tutorialDot: {
+    width: 26,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: COLORS.border,
+  },
+  tutorialDotActive: { backgroundColor: COLORS.text },
+  tutorialDotDone: { backgroundColor: COLORS.primaryDark },
+  tutorialText: {
+    fontFamily: FONTS.semiBold,
+    fontSize: 17,
+    color: COLORS.text,
+    textAlign: 'center',
+    lineHeight: 24,
+    minHeight: 48,
+    maxWidth: 300,
+  },
   // Premium yoksa: kilitli buton
   lockedRomanticBtn: {
     flexDirection: 'row',
@@ -767,6 +895,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: ROMANTIC.rowBorder,
   },
+  hintPillTarget: {
+    backgroundColor: COLORS.text,
+    transform: [{ scale: 1.06 }],
+  },
+  hintPillDimmed: { opacity: 0.35 },
+  hintTextTarget: { color: '#fff' },
   hintEmoji: {
     fontFamily: FONTS.bold,
     fontSize: 13,

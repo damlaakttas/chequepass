@@ -171,6 +171,74 @@ exports.onChequeUpdated = onDocumentUpdated('cheques/{id}', async (event) => {
   }
 });
 
+// ---- Yeni mesaj ------------------------------------------------------------
+//
+// Alıcı göndereni engellemişse bildirim gönderilmez (Firestore kuralı zaten
+// yazmayı engelliyor, bu ikinci bir güvenlik katmanı).
+
+exports.onMessageCreated = onDocumentCreated('messages/{id}', async (event) => {
+  const snap = event.data;
+  if (!snap) return;
+  const m = snap.data();
+
+  const recipient = m.recipientId;
+  const sender = m.senderId;
+  if (!recipient || !sender || recipient === sender) return;
+
+  let senderName = '';
+  try {
+    const uSnap = await db.collection('users').doc(recipient).get();
+    if (uSnap.exists) {
+      const blocked = uSnap.data().blocked || [];
+      if (Array.isArray(blocked) && blocked.includes(sender)) return;
+    }
+    const sSnap = await db.collection('users').doc(sender).get();
+    if (sSnap.exists) senderName = sSnap.data().username || '';
+  } catch (e) {
+    console.error('onMessageCreated lookup failed', e);
+  }
+  senderName = senderName || 'Arkadaşın';
+
+  const preview = String(m.text || '');
+  await notifyUser(
+    recipient,
+    `@${senderName}`,
+    preview.length > 120 ? `${preview.slice(0, 117)}...` : preview,
+    { type: 'message', friendshipId: m.friendshipId || null }
+  );
+});
+
+// ---- Dürtme ----------------------------------------------------------------
+//
+// Kullanıcı arkadaşını dürttüğünde karşı tarafın telefonuna bildirim gider.
+// Telefon titreşimi bildirimle birlikte işletim sistemi tarafından yapılır.
+
+exports.onNudgeCreated = onDocumentCreated('nudges/{id}', async (event) => {
+  const snap = event.data;
+  if (!snap) return;
+  const n = snap.data();
+
+  const recipient = n.toId;
+  const sender = n.fromId;
+  if (!recipient || !sender || recipient === sender) return;
+
+  let senderName = n.fromUsername;
+  if (!senderName) {
+    try {
+      const uSnap = await db.collection('users').doc(sender).get();
+      if (uSnap.exists) senderName = uSnap.data().username;
+    } catch (e) {}
+  }
+  senderName = senderName || 'Arkadaşın';
+
+  await notifyUser(
+    recipient,
+    'Dürtüldün 👋',
+    `@${senderName} seni dürttü.`,
+    { type: 'nudge', friendshipId: n.friendshipId || null }
+  );
+});
+
 // ---- Süresi dolmak üzere olan çekler --------------------------------------
 //
 // Saatte bir çalışır. Bitmesine EXPIRY_REMINDER_HOURS (12) saatten az kalan,

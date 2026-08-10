@@ -4,7 +4,7 @@ import { View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput, Alert, A
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRoute } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Search, UserPlus, Heart, Users, Trash2, Check, X, Clock, Inbox, Edit3 } from 'lucide-react-native';
+import { Search, UserPlus, Heart, Users, Trash2, Check, X, Clock, Inbox, Edit3, Vibrate } from 'lucide-react-native';
 import ScreenHeader from '../components/ScreenHeader';
 import AnimalAvatar from '../components/AnimalAvatar';
 import BottomSheet from '../components/BottomSheet';
@@ -34,6 +34,7 @@ const FriendsScreen = () => {
     rejectFriendRequest,
     updateFriendRelation,
     activateRomanticForFriend,
+    nudgeFriend,
   } = useApp();
 
   const route = useRoute();
@@ -44,6 +45,7 @@ const FriendsScreen = () => {
   const [newRelation, setNewRelation] = useState('friend');
   const [sending, setSending] = useState(false);
   const [processingId, setProcessingId] = useState(null);
+  const [nudgingId, setNudgingId] = useState(null);
   const [paywallOpen, setPaywallOpen] = useState(false);
   // Paywall hangi ilişki için açıldı? null ise sadece tanıtım gösterilir
   // (satın alma yapılamaz — hedef ilişki belli değil).
@@ -178,6 +180,23 @@ const FriendsScreen = () => {
     );
   };
 
+  /**
+   * Dürtme: karşı tarafın telefonuna titreşimli bildirim gönderir.
+   * Aynı kişiye 60 saniyede bir gönderilebilir (AppContext'te sınırlı).
+   */
+  const handleNudge = async (friend) => {
+    if (nudgingId) return;
+    setNudgingId(friend.id);
+    try {
+      await nudgeFriend(friend.id);
+      Alert.alert('Dürttün 👋', `@${friend.username} bildirim aldı.`);
+    } catch (e) {
+      Alert.alert('Olmadı', e.message || 'Dürtme gönderilemedi');
+    } finally {
+      setNudgingId(null);
+    }
+  };
+
   const renderFriend = ({ item }) => {
     const active = item.id === activeFriendId;
     const processing = processingId === item.id;
@@ -197,13 +216,19 @@ const FriendsScreen = () => {
           </Text>
         </View>
         <View style={{ flexDirection: 'row', gap: 6 }}>
+          {/* Seçili arkadaşta tik yerine DÜRTME butonu.
+              Dokununca karşı tarafın telefonuna titreşimli bildirim gider. */}
           <TouchableOpacity
-            style={[styles.iconBtn, active && styles.iconBtnActive]}
-            onPress={() => setActiveFriend(item.id)}
-            disabled={processing}
+            style={[styles.iconBtn, active && styles.iconBtnNudge]}
+            onPress={() => (active ? handleNudge(item) : setActiveFriend(item.id))}
+            disabled={processing || nudgingId === item.id}
           >
             {active ? (
-              <Check size={16} color={COLORS.text} />
+              nudgingId === item.id ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Vibrate size={16} color="#fff" />
+              )
             ) : (
               <Text style={styles.selectText}>Seç</Text>
             )}
@@ -611,6 +636,10 @@ const styles = StyleSheet.create({
   },
   iconBtnActive: {
     backgroundColor: COLORS.primary,
+  },
+  // Seçili arkadaşta gösterilen dürtme butonu
+  iconBtnNudge: {
+    backgroundColor: COLORS.text,
   },
   iconBtnLight: {
     width: 34,

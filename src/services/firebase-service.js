@@ -9,6 +9,13 @@ import {
   updateDoc,
   runTransaction,
   Timestamp,
+  query,
+  where,
+  orderBy,
+  limit,
+  onSnapshot,
+  arrayUnion,
+  arrayRemove,
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { expiryDaysFor, expiryMillisFor } from '../config/cheques';
@@ -314,6 +321,164 @@ export const createCheque = async ({
     createdAt: serverTimestamp(),
     expiresAt: Timestamp.fromMillis(expiresAtMillis),
     expiryDays: expiryDaysFor(deckVariant),
+  });
+  return ref.id;
+};
+
+/**
+ * DÜRTME — arkadaşına titreşimli bir bildirim yollar.
+ *
+ * Doküman oluşunca Cloud Function (onNudgeCreated) karşı tarafın telefonuna
+ * push bildirimi gönderir. Uygulama açıksa AppContext'teki dinleyici de
+ * cihazı titretir.
+ */
+export const sendNudge = async ({
+  friendshipId,
+  fromId,
+  toId,
+  fromUsername,
+  participants,
+}) => {
+  if (!fromId || !toId || fromId === toId) {
+    throw new Error('Dürtme gönderilemedi');
+  }
+  const ref = doc(collection(db, 'nudges'));
+  await setDoc(ref, {
+    friendshipId: friendshipId || null,
+    fromId,
+    toId,
+    fromUsername: fromUsername || '',
+    participants,
+    createdAt: serverTimestamp(),
+  });
+  return ref.id;
+};
+
+// ---- Mesajlaşma -------------------------------------------------------------
+//
+// Mesajlar düz `messages` koleksiyonunda tutulur. Mesajlar sekmesindeki liste
+// her arkadaş için ayrı sorgu atmasın diye SON MESAJ, friendship dokümanına
+// `lastMessage` olarak kopyalanır. Okundu bilgisi de `lastRead.{uid}` altında
+// friendship'te durur; böylece cihazlar arası senkron olur.
+
+const MESSAGE_PAGE_SIZE = 100;
+
+export const sendMessage = async ({
+  friendshipId,
+  senderId,
+  recipientId,
+  participants,
+  text,
+}) => {
+  if (!friendshipId || !senderId || !recipientId) {
+    throw new Error('Mesaj gönderilemedi');
+  }
+  const clean = String(text || '').trim();
+  if (!clean) throw new Error('Mesaj boş olamaz');
+
+  const ref = doc(collection(db, 'messages'));
+  await setDoc(ref, {
+    friendshipId,
+    participants,
+    senderId,
+    recipientId,
+    text: clean,
+    createdAt: serverTimestamp(),
+  });
+
+  // Liste ekranı için son mesajı ilişkiye kopyala (best-effort).
+  try {
+    await updateDoc(doc(db, 'friendships', friendshipId), {
+      lastMessage: {
+        text: clean.slice(0, 140),
+        senderId,
+        createdAt: serverTimestamp(),
+      },
+    });
+  } catch (e) {
+    console.warn('lastMessage update failed:', e.code, e.message);
+  }
+
+  return ref.id;
+};
+
+/** Sohbeti okundu olarak işaretle. */
+export const markConversationRead = async (friendshipId, uid) => {
+  if (!friendshipId || !uid) return;
+  try {
+    await updateDoc(doc(db, 'friendships', friendshipId), {
+      [`lastRead.${uid}`]: serverTimestamp(),
+    });
+  } catch (e) {
+    console.warn('markConversationRead failed:', e.code, e.message);
+  }
+};
+
+/** Bir sohbetin mesajlarını canlı dinle. Aboneliği iptal eden fonksiyon döner. */
+export const subscribeToMessages = (friendshipId, onData, onError) => {
+  const q = query(
+    collection(db, 'messages'),
+    where('friendshipId', '==', friendshipId),
+    orderBy('createdAt', 'desc'),
+    limit(MESSAGE_PAGE_SIZE)
+  );
+  return onSnapshot(
+    q,
+    (snap) => {
+      const list = snap.docs.map((d) => {
+        const data = d.data();
+        return {
+          id: d.id,
+          ...data,
+          createdAtMillis:
+            data.createdAt && typeof data.createdAt.toMillis === 'function'
+              ? data.createdAt.toMillis()
+              : Date.now(),
+        };
+      });
+      onData(list);
+    },
+    (err) => {
+      console.error('Messages listener error:', err);
+      onError && onError(err);
+    }
+  );
+};
+
+// ---- Moderasyon (App Store Guideline 1.2) -----------------------------------
+
+/** Kullanıcıyı engelle: karşı taraf artık mesaj gönderemez. */
+export const blockUser = async (uid, blockedUid) => {
+  if (!uid || !blockedUid) return;
+  await setDoc(doc(db, 'users', uid), { blocked: arrayUnion(blockedUid) }, { merge: true });
+};
+
+/** Engeli kaldır. */
+export const unblockUser = async (uid, blockedUid) => {
+  if (!uid || !blockedUid) return;
+  await setDoc(doc(db, 'users', uid), { blocked: arrayRemove(blockedUid) }, { merge: true });
+};
+
+/** Mesajı/kullanıcıyı şikayet et. İnceleme için `reports` koleksiyonuna düşer. */
+export const reportContent = async ({
+  reporterId,
+  reportedId,
+  friendshipId,
+  messageId,
+  messageText,
+  reason,
+}) => {
+  if (!reporterId || !reportedId) throw new Error('Şikayet gönderilemedi');
+  const ref = doc(collection(db, 'reports'));
+  await setDoc(ref, {
+    reporterId,
+    reportedId,
+    friendshipId: friendshipId || null,
+    messageId: messageId || null,
+    messageText: (messageText || '').slice(0, 500),
+    reason: reason || 'other',
+    status: 'open',
+    createdAt: serverTimestamp(),
   });
   return ref.id;
 };
