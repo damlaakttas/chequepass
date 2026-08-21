@@ -16,6 +16,7 @@ import { AppProvider } from './src/context/AppContext';
 import { PremiumProvider } from './src/context/PremiumContext';
 import RootNavigator from './src/navigation/RootNavigator';
 import SplashVideo from './src/components/SplashVideo';
+import { initAds } from './src/services/ads';
 import { COLORS } from './src/theme/theme';
 
 export default function App() {
@@ -26,6 +27,12 @@ export default function App() {
     Poppins_700Bold,
   });
   const [splashDone, setSplashDone] = React.useState(false);
+
+  // Reklam SDK'sını açılışta bir kez başlat; ilk reklam daha hızlı yüklenir.
+  // Native modül yoksa (Expo Go) sessizce hiçbir şey yapmaz.
+  React.useEffect(() => {
+    initAds();
+  }, []);
 
   if (!fontsLoaded) {
     // Spinner yok: splash videosuyla kesintisiz geçiş için düz arka plan.

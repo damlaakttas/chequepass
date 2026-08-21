@@ -52,6 +52,8 @@ import { useApp } from '../context/AppContext';
 import { usePremium } from '../context/PremiumContext';
 import { pickRandom } from '../utils/helpers';
 import { playShuffleSound } from '../utils/sound';
+import { showRewardedAd, getAdDiagnostics } from '../services/ads';
+import { isTestAdAccount, SHOW_AD_DIAGNOSTICS } from '../config/ads';
 
 // İLK AÇILIŞ TANITIMI
 //
@@ -73,6 +75,7 @@ const TUTORIAL_FALLBACK = [
 
 const HomeScreen = ({ navigation }) => {
   const {
+    user,
     activeDeckInfo,
     decks,
     decksLoaded,
@@ -106,6 +109,7 @@ const HomeScreen = ({ navigation }) => {
   const [pendingResolve, setPendingResolve] = useState(null);
   const [noteText, setNoteText] = useState('');
   const [saving, setSaving] = useState(false);
+  const [adLoading, setAdLoading] = useState(false);
 
   const shuffleRotate = useSharedValue(0);
   const shuffleY = useSharedValue(0);
@@ -320,21 +324,66 @@ const HomeScreen = ({ navigation }) => {
     }
   };
 
-  // Pas hakkı bitince bonus pas ver. (Reklam entegrasyonu Adım 3'te eklenecek.)
-  const claimBonusPass = () => {
+  /**
+   * Pas hakkı bitince ödüllü reklam izleyerek bonus pas kazan.
+   *
+   * - Reklam sonuna kadar izlenirse    → pas verilir
+   * - Reklam yarıda kapatılırsa         → pas VERİLMEZ
+   * - Reklam hiç yüklenemezse           → pas yine verilir (kullanıcı
+   *   internet/envanter sorunundan dolayı tıkanmasın diye)
+   */
+  const claimBonusPass = async () => {
+    if (adLoading) return;
+    setAdLoading(true);
+
+    let result = { available: false, rewarded: false, reason: 'istisna' };
+    try {
+      // Test hesaplarına gerçek reklam yerine test reklamı gösterilir;
+      // biz test ederken reklama dokunmak sorun olmaz.
+      result = await showRewardedAd({ email: user?.email });
+    } catch (e) {
+      console.warn('Rewarded ad failed:', e);
+      result = { available: false, rewarded: false, reason: `istisna: ${e?.message || e}` };
+    }
+    setAdLoading(false);
+
+    // Reklam açıldı ama kullanıcı ödülü hak etmeden kapattı.
+    if (result.available && !result.rewarded) {
+      Alert.alert(
+        'Reklam tamamlanmadı',
+        'Bonus pas kazanmak için reklamı sonuna kadar izlemen gerekiyor.'
+      );
+      return;
+    }
+
     setPassPromptOpen(false);
-    setTimeout(async () => {
-      grantExtraPass();
-      if (pendingPassTemplate) {
-        try {
-          await resolveCheque(pendingPassTemplate, 'pass', '');
-        } catch (e) {
-          console.warn('Pass resolve failed:', e);
-        }
-        setPendingPassTemplate(null);
+    grantExtraPass();
+    if (pendingPassTemplate) {
+      try {
+        await resolveCheque(pendingPassTemplate, 'pass', '');
+      } catch (e) {
+        console.warn('Pass resolve failed:', e);
       }
-      Alert.alert('Ekstra pas kazandın!', 'Bonus pas hakkın tanımlandı.');
-    }, 600);
+      setPendingPassTemplate(null);
+    }
+
+    // Teşhis modu açıkken ve test hesabındayken, reklam gelmediyse nedenini göster.
+    // Normalde kapalı; gerçek kullanıcılar bu metni hiçbir koşulda görmez.
+    if (SHOW_AD_DIAGNOSTICS && !result.available && isTestAdAccount(user?.email)) {
+      const d = getAdDiagnostics({ email: user?.email });
+      Alert.alert(
+        'Ekstra pas kazandın! (reklam gelmedi)',
+        `Neden: ${result.reason}\n\n` +
+          `modül: ${d.moduleLoaded ? 'var' : 'YOK'}\n` +
+          `mobileAds(): ${d.mobileAdsFn ? 'var' : 'YOK'}\n` +
+          `init: ${d.initState}${d.lastInitError ? ' — ' + d.lastInitError : ''}\n` +
+          `reklam: ${d.usingTestAd ? 'TEST' : 'GERÇEK'}` +
+          (d.importError ? `\nimport hatası: ${d.importError}` : '')
+      );
+      return;
+    }
+
+    Alert.alert('Ekstra pas kazandın!', 'Bonus pas hakkın tanımlandı.');
   };
 
   const directionLabel = pendingResolve?.direction === 'gift'
@@ -599,12 +648,26 @@ const HomeScreen = ({ navigation }) => {
         maxHeight={380}
       >
         <Text style={styles.modalBody}>
-          Günlük ücretsiz pas hakkını kullandın. İstersen bir bonus pas hakkı kullanabilirsin.
-          Pas hakkın 24 saat içinde otomatik yenilenir.
+          Günlük ücretsiz pas hakkını kullandın. Kısa bir reklam izleyerek bir bonus pas
+          kazanabilirsin. Pas hakkın 24 saat içinde otomatik yenilenir.
         </Text>
-        <TouchableOpacity style={styles.watchBtn} onPress={claimBonusPass} activeOpacity={0.85}>
-          <PlayCircle size={18} color="#fff" />
-          <Text style={styles.watchBtnText}>Bonus Pas Kullan</Text>
+        <TouchableOpacity
+          style={[styles.watchBtn, adLoading && { opacity: 0.6 }]}
+          onPress={claimBonusPass}
+          disabled={adLoading}
+          activeOpacity={0.85}
+        >
+          {adLoading ? (
+            <>
+              <ActivityIndicator size="small" color="#fff" />
+              <Text style={styles.watchBtnText}>Reklam yükleniyor...</Text>
+            </>
+          ) : (
+            <>
+              <PlayCircle size={18} color="#fff" />
+              <Text style={styles.watchBtnText}>Reklam İzle, Pas Kazan</Text>
+            </>
+          )}
         </TouchableOpacity>
       </BottomSheet>
 

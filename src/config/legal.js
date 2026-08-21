@@ -2,8 +2,10 @@
 //
 // Kullanım Şartları ve Gizlilik Politikası metinleri.
 // Hem AuthScreen (kayıt) hem ProfileScreen (hesap) tarafından kullanılır.
-// NOT: Uygulamada reklam SDK'sı YOK; bu yüzden metinlerde reklam/AdMob
-// referansı bulunmaz (Apple, uygulamayla eşleşmeyen beyanları sorun eder).
+//
+// ÖNEMLİ: Apple, beyan ile uygulamanın davranışını karşılaştırır. Uygulamaya
+// bir SDK eklenip metin güncellenmezse (veya tersi) inceleme reddedilebilir.
+// Şu an kapsananlar: AdMob ödüllü reklam, RevenueCat satın alma, mesajlaşma.
 
 export const TERMS_TEXT = `ChequePass uygulamasını kullanarak aşağıdaki şartları kabul etmiş sayılırsın.
 
@@ -46,7 +48,13 @@ export const PRIVACY_TEXT = `Gizliliğine saygı duyuyoruz.
 
 - Nerede saklanır: Google Firebase altyapısında saklanır.
 
-- Üçüncü taraflar: Satın alma işlemleri Apple App Store ve RevenueCat altyapısı üzerinden yürütülür. Verilerin reklam amaçlı hiçbir üçüncü tarafla paylaşılmaz.
+- Üçüncü taraflar: Satın alma işlemleri Apple App Store ve RevenueCat altyapısı üzerinden yürütülür.
+
+- Reklamlar: Günlük ücretsiz pas hakkın bittiğinde, ekstra pas kazanmak için Google AdMob üzerinden ÖDÜLLÜ reklam izlemeyi seçebilirsin. Reklam izlemek tamamen isteğe bağlıdır; izlemezsen pas hakkın 24 saat içinde zaten yenilenir.
+
+  Gösterilen reklamlar KİŞİSELLEŞTİRİLMEMİŞTİR. Seni takip etmiyoruz, reklam kimliğini (IDFA) kullanmıyoruz ve reklam verenlerle kişisel verilerini paylaşmıyoruz. AdMob, reklam gösterimi ve sahtecilik önleme amacıyla cihaz türü ve yaklaşık konum (ülke) gibi teknik bilgileri işleyebilir. Google'ın uygulamaları için: policies.google.com/technologies/partner-sites
+
+- Mesajlaşma: Arkadaşlarınla gönderdiğin mesajlar Firebase'de saklanır ve yalnızca sohbetin iki tarafı okuyabilir. Şikayet edilen mesajlar inceleme amacıyla ayrıca kaydedilir.
 
 - Haklarınız: Hesabını ve tüm verilerini Profil ekranındaki "Hesabı Sil" seçeneğiyle kalıcı olarak silebilirsin. Veri dışa aktarma ve düzeltme taleplerin için bizimle iletişime geçebilirsin.
 
